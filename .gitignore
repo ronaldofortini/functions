@@ -40,3 +40,10 @@ firestore-debug.log
 # Arquivos do Editor/SO
 .DS_Store
 .vscode/
+
+# Arquivos de Chave de Serviço do Google
+serviceAccountKey.json
+firebase-credentials.json
+
+# Regra geral para qualquer arquivo de credenciais
+*-credentials.json
