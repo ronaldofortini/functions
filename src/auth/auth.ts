@@ -21,6 +21,8 @@ const allowedOrigins = [
   /localhost:\d+$/, // Para desenvolvimento local
   "https://colormind.com.br",
   "https://www.colormind.com.br",
+    "https://betacolormind.web.app",
+  "https://www.betacolormind.web.app",
   // Se você tiver um subdomínio de staging, adicione aqui também
   // "https://dev.seu-site.com.br"
 ];
