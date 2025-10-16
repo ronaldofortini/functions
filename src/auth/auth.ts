@@ -17,7 +17,13 @@ if (admin.apps.length === 0) {
   admin.initializeApp();
 }
 
-
+const allowedOrigins = [
+  /localhost:\d+$/, // Para desenvolvimento local
+  "https://colormind.com.br",
+  "https://www.colormind.com.br",
+  // Se você tiver um subdomínio de staging, adicione aqui também
+  // "https://dev.seu-site.com.br"
+];
 
 
 
@@ -36,7 +42,7 @@ function _verificarNegativeKeywords(value: string): boolean {
   return false;
 }
 
-export const handleAuthStep = onCall(async (request) => {
+export const handleAuthStep = onCall({cors: allowedOrigins},async (request) => {
   const { step, value, userProfile, mode } = request.data;
   const response = {
     isValid: false,
@@ -276,7 +282,7 @@ export const handleAuthStep = onCall(async (request) => {
         // ✅ ALTERAÇÃO AQUI: Adicionamos a mensagem com o link para o Google.
         response.nextQuestion = mode === 'login'
           ? "Qual é o seu e-mail?||ou [link:signInWithGoogle|Continuar com o Google]"
-          : "Olá!||Para começar, qual é o seu e-mail?||ou [link:signInWithGoogle|Continuar com o Google]";
+          : "Olá!||Para começar, qual é o seu e-mail?||ou [link:signInWithGoogle|continue com o Google]";
           break;
       case 'email': {
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -705,10 +711,25 @@ Medicamentos: ${hp.currentMedications.length > 0 ? hp.currentMedications.join(',
       if (!rawProfile) {
         throw new HttpsError("invalid-argument", "O perfil do usuário é necessário para salvar.");
       }
+// ✅ NOVA LÓGICA IMPLEMENTADA AQUI
+      // Garante que a foto do Google seja usada se o usuário não enviou uma nova.
+      // Verificamos se a URL no perfil vindo do cliente é uma URL de upload temporária.
+      const hasUploadedNewPhoto = rawProfile.photoURL && rawProfile.photoURL.includes('/avatars/temp/');
+
+      if (!hasUploadedNewPhoto) {
+          // Se não enviou foto nova, usamos a foto do token de autenticação do Google como a fonte da verdade.
+          // Se o usuário do Google não tiver foto, 'request.auth.token.picture' será nulo,
+          // e a função _processProfileForFirestore usará a foto placeholder.
+          rawProfile.photoURL = request.auth.token.picture || null;
+      }
+
       const uid = request.auth.uid;
+      // Agora, o `rawProfile` é enviado para processamento com a URL da foto correta.
       const profileToSave = await _processProfileForFirestore(rawProfile, uid, false);
+      
       await admin.auth().updateUser(uid, { displayName: profileToSave.fullName, photoURL: profileToSave.photoURL });
       await admin.firestore().collection("users").doc(uid).set(profileToSave);
+      
       if (profileToSave.email) {
         await admin.firestore().collection('incompleteRegistrations').doc(profileToSave.email).delete();
       }

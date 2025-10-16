@@ -8,6 +8,7 @@
     "start": "npm run shell",
     "deploy": "firebase deploy --only functions",
     "save": "./save.sh",
+    "deploy-focado": "./deploy-focado.sh",
     "logs": "firebase functions:log"
   },
   "engines": {
