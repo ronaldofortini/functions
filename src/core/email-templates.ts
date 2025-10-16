@@ -198,6 +198,14 @@ interface PendingPaymentReminderEmailProps {
   optimizationLink: string; // Link especial para otimização
 }
 
+interface RecalculatedDietEmailProps {
+  firstName: string;
+  orderId: string;
+  oldPrice: number;
+  newPrice: number;
+  pixCopiaECola: string;
+  qrCodeImageUrl: string;
+}
 // --- COMPONENTES REUTILIZÁVEIS ---
 
 const capitalizeName = (name: string): string => {
@@ -529,6 +537,56 @@ export const getPendingPaymentReminderEmailHTML = (props: PendingPaymentReminder
   return createEmailLayout({
     title: `Finalize sua dieta - Pedido ${formattedId}`,
     preheaderText: `O valor de ${formattedTotal} está pesando? Tente otimizar os ingredientes para um preço melhor!`,
+    bodyContent: bodyContent
+  });
+};
+
+export const getRecalculatedDietEmailHTML = (props: RecalculatedDietEmailProps): string => {
+  const { firstName, orderId, oldPrice, newPrice, pixCopiaECola, qrCodeImageUrl } = props;
+
+  const savings = oldPrice - newPrice;
+
+  const formattedOldPrice = oldPrice.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  const formattedNewPrice = newPrice.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  const formattedSavings = savings.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  const formattedId = formatOrderIdForDisplay(orderId);
+
+  const nonLinkablePixCode = pixCopiaECola.replace(/\./g, '&#8203;.');
+
+  const bodyContent = `
+    <h2 style="font-size: 22px; color: #111; font-family: Arial, sans-serif; margin-top: 0;">Sua dieta foi otimizada com sucesso!</h2>
+    <p style="font-family: Arial, sans-serif; font-size: 16px; color: #555555;">Olá, ${firstName},</p>
+    <p style="font-family: Arial, sans-serif; font-size: 16px; color: #555555;">Atendendo à sua solicitação, nossa IA recalculou os ingredientes da sua dieta <strong>${formattedId}</strong> para encontrar o melhor custo-benefício. O valor foi atualizado:</p>
+    
+    <div style="background-color: #f8f8f8; padding: 16px; border-radius: 8px; margin: 24px 0; font-family: Arial, sans-serif; border-left: 3px solid #16a34a;">
+      <p style="margin: 0 0 10px 0;">Valor Anterior: <span style="text-decoration: line-through;">${formattedOldPrice}</span></p>
+      <p style="margin: 0 0 10px 0;"><strong>Novo Valor: ${formattedNewPrice}</strong></p>
+      <hr style="border: none; border-top: 1px solid #ddd; margin: 15px 0;">
+      <p style="margin: 0; color: #15803d;"><strong>Sua Economia: ${formattedSavings}</strong></p>
+    </div>
+
+    <p style="font-family: Arial, sans-serif; font-size: 16px; color: #555555;">Geramos um novo PIX com o valor atualizado para você finalizar a compra. O código anterior foi cancelado.</p>
+    
+    <div style="margin: 24px 0; text-align: center;">
+      <p style="font-family: Arial, sans-serif; font-size: 16px; color: #555555;">Aponte a câmera do seu celular para o novo QR Code:</p>
+      <div style="background-color: #ffffff; padding: 8px; border: 1px solid #e2e8f0; border-radius: 8px; display: inline-block; margin-top: 10px;">
+        <img src="${qrCodeImageUrl}" alt="Novo QR Code PIX" style="width: 200px; height: 200px; display: block;">
+      </div>
+    </div>
+    
+    <p style="font-family: Arial, sans-serif; font-size: 16px; color: #555555;">Ou, se preferir, use o novo código Copia e Cola:</p>
+    <div style="background-color: #f8f8f8; padding: 16px; border-radius: 8px; text-align: center; margin: 24px 0;">
+      <p style="font-family: monospace; font-size: 12px; color: #333333 !important; text-decoration: none !important; word-break: break-all; margin: 0;">${nonLinkablePixCode}</p>
+    </div>
+    
+    <table width="100%" border="0" cellspacing="0" cellpadding="0" style="margin: 30px 0;">
+      <tr><td align="center">${createButtonHTML({ href: `https://colormind.com.br/profile?section=diets`, text: 'Ver Detalhes do Pedido' })}</td></tr>
+    </table>
+  `;
+
+  return createEmailLayout({
+    title: `Preço Otimizado - Pedido ${formattedId}`,
+    preheaderText: `Você economizou ${formattedSavings}! Seu novo total é ${formattedNewPrice}.`,
     bodyContent: bodyContent
   });
 };

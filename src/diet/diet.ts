@@ -10,10 +10,10 @@ import { callAI, formatActivityLevel } from "../core/utils"
 import { interpretUserPrompt } from "./prompt-interpreter";
 import { calculateNutritionalTargets } from "./nutrition-calculator";
 import { fetchAllFoods, filterFoodListWithAI, selectAndQuantifyFoods, generateDietExplanationAI, _generateFoodExplanationsInOneShot } from "./diet-logic";
-import { calculateAge } from "../core/utils";
+import { calculateAge, formatFirstName, sendEmail } from "../core/utils";
 // Imports de Modelos e Funções Utilitárias
 import { Diet, FoodItem, Address, UserProfile, HealthProfile, JobDiet } from "../core/models";
-
+import {getRecalculatedDietEmailHTML} from './../core/email-templates'
 import { calculateDietMetrics, generateSequentialDietId, sanitizeNaNValues, _getRidePriceEstimateLogic, _generatePixChargeLogic, _initiatePixRefundLogic, getEfiAuthToken, getEfiCertificates, httpsRequest } from "../core/utils";
 const db = admin.firestore();
 
@@ -699,6 +699,27 @@ export const recalculateDietForCost = onCall({ region: "southamerica-east1" }, a
         };
 
         await dietDocRef.set(sanitizeNaNValues(updatedDietData));
+
+        try {
+            const firstName = formatFirstName(updatedDietData.userFullName);
+            const emailHtml = getRecalculatedDietEmailHTML({
+                firstName: firstName,
+                orderId: dietId,
+                oldPrice: originalDiet.totalPrice,
+                newPrice: finalTotalPrice,
+                pixCopiaECola: newPaymentDetails.copiaECola,
+                qrCodeImageUrl: newPaymentDetails.qrCodeImageUrl,
+            });
+
+            await sendEmail(
+                updatedDietData.userEmail,
+                `✅ Sua dieta foi otimizada! Novo valor: ${finalTotalPrice.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}`,
+                emailHtml
+            );
+            logger.log(`E-mail de recálculo enviado com sucesso para a dieta [${dietId}].`);
+        } catch (emailError) {
+            logger.error(`Falha ao enviar o e-mail de recálculo para a dieta [${dietId}]. O processo principal não foi afetado.`, emailError);
+        }
 
         // A função agora retorna explicitamente o objeto de sucesso no final do bloco 'try'.
         return { success: true, newPrice: finalTotalPrice };
