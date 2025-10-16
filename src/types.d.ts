@@ -1,0 +1,1 @@
+declare module 'gn-api-sdk-node';
