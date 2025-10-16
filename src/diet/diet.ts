@@ -643,7 +643,6 @@ export const recalculateDietForCost = onCall({ region: "southamerica-east1" }, a
         const oldTxid = originalDiet.paymentDetails?.txid;
         if (oldTxid) {
             try {
-                // Agora esta chamada funcionará, pois a função está no mesmo arquivo
                 await _cancelPixCharge(oldTxid);
                 logger.log(`Cobrança PIX antiga [${oldTxid}] para a dieta [${dietId}] foi cancelada.`);
             } catch (cancelError) {
@@ -701,14 +700,26 @@ export const recalculateDietForCost = onCall({ region: "southamerica-east1" }, a
 
         await dietDocRef.set(sanitizeNaNValues(updatedDietData));
 
+        // A função agora retorna explicitamente o objeto de sucesso no final do bloco 'try'.
         return { success: true, newPrice: finalTotalPrice };
 
     } catch (error: any) {
         logger.error(`Erro crítico ao recalcular a dieta [${dietId}]:`, error);
+        // Se qualquer erro for lançado dentro do 'try', ele será capturado aqui e
+        // o wrapper onCall o enviará corretamente ao cliente.
         if (error instanceof HttpsError) throw error;
         throw new HttpsError("internal", "Um erro inesperado ocorreu durante o recálculo da dieta.");
     }
 });
+
+
+
+
+
+
+
+
+
 /**
  * Permite que um cliente cancele sua própria dieta PENDENTE.
  */
