@@ -5,11 +5,12 @@ import axios from "axios";
 import { v4 as uuidv4 } from 'uuid';
 // import { getSecrets, twilioClient } from "../core/secrets";
 import { getSecrets } from "../core/secrets";
-import { formatFullName, formatPhone, generateCode, calculateAge, getPercentageFromLevel, _interpretHealthDataInternal, formatFirstName } from "../core/utils";
+import { formatFullName, formatPhone, generateCode, _geocodeAddress, calculateAge, getPercentageFromLevel, _interpretHealthDataInternal, formatFirstName } from "../core/utils";
 import { getWelcomeEmailHTML, getNewUserAdminAlertEmailHTML, getRegistrationStartAdminAlertEmailHTML } from "../core/email-templates";
 import * as logger from "firebase-functions/logger";
 import { onDocumentCreated } from "firebase-functions/v2/firestore";
 import sgMail = require("@sendgrid/mail");
+import { Address } from "../../../models/models";
 // const { onUserCreated } = require("firebase-functions/v2/auth");
 // import * as functions from "firebase-functions/v1"; // Usando V1 para o gatilho de auth
 
@@ -801,7 +802,6 @@ Medicamentos: ${hp.currentMedications.length > 0 ? hp.currentMedications.join(',
 async function _processProfileForFirestore(rawProfile: any, uid: string, isFinalCreationStep: boolean): Promise<any> {
   logger.log("Iniciando _processProfileForFirestore para UID:", uid);
 
-  // ✅ CORREÇÃO: Acessamos o perfil de saúde aninhado e o endereço de forma segura.
   const hp_raw = rawProfile.healthProfile || {};
   const address_raw = rawProfile.address || {};
 
@@ -819,6 +819,7 @@ async function _processProfileForFirestore(rawProfile: any, uid: string, isFinal
     throw new HttpsError("invalid-argument", "Dados essenciais estão faltando para processar o perfil.");
   }
 
+  // --- Lógica de Foto de Perfil (sem alterações) ---
   let permanentPhotoURL: string;
   const placeholderAvatarUrl = "https://firebasestorage.googleapis.com/v0/b/meal-plan-280d2.appspot.com/o/app%2Favatars%2Favatar-placeholder.jpg?alt=media&token=441f5cfb-bd0f-4f96-80a1-19138ef0aa57";
   const tempUrl = rawProfile.photoURL;
@@ -843,26 +844,31 @@ async function _processProfileForFirestore(rawProfile: any, uid: string, isFinal
     permanentPhotoURL = tempUrl || placeholderAvatarUrl;
   }
 
+  // --- Processamento de Dados de Saúde (sem alterações) ---
   const [
     allergiesResult,
     dietaryRestrictionsResult,
     healthConditionsResult,
     currentMedicationsResult,
   ] = await Promise.all([
-    // ✅ CORREÇÃO: Passamos os dados corretos que vêm do objeto aninhado.
     _interpretHealthDataInternal(hp_raw.allergies, 'allergies'),
     _interpretHealthDataInternal(hp_raw.dietaryRestrictions, 'dietaryRestrictions'),
     _interpretHealthDataInternal(hp_raw.healthConditions, 'healthConditions'),
     _interpretHealthDataInternal(hp_raw.currentMedications, 'currentMedications'),
   ]);
 
+  // =====================================================================
+  // ✅ INÍCIO DA LÓGICA DE ENDEREÇO E GEOCODIFICAÇÃO
+  // =====================================================================
+
   const cepResponse = await axios.get(`https://viacep.com.br/ws/${address_raw.zipCode.replace(/\D/g, "")}/json/`);
   if (cepResponse.data.erro) throw new HttpsError("not-found", "CEP não encontrado.");
   const cepData = cepResponse.data;
 
-  const addressesArray = [{
+  // 1. Montamos o objeto de endereço completo, com tipagem explícita.
+  const finalAddress: Address = {
     id: uuidv4(),
-    street: cepData.logradouro || address_raw?.street || '',
+    street: address_raw?.street || cepData.logradouro || '',
     number: address_raw?.number || '',
     complement: address_raw?.complement || '',
     neighborhood: address_raw?.neighborhood || cepData.bairro || '',
@@ -870,11 +876,30 @@ async function _processProfileForFirestore(rawProfile: any, uid: string, isFinal
     state: cepData.uf,
     zipCode: cepData.cep,
     isDefault: true,
-  }];
+  };
+
+  // 2. Chamamos a função de geocodificação centralizada.
+  logger.log(`Iniciando geocodificação para o endereço:`, finalAddress);
+  const coordinates = await _geocodeAddress(finalAddress);
+
+  // 3. Se a geocodificação for bem-sucedida, anexamos as coordenadas.
+  if (coordinates) {
+    finalAddress.coordinates = coordinates;
+    logger.log(`Geocodificação bem-sucedida. Coordenadas:`, coordinates);
+  } else {
+    logger.warn(`Não foi possível obter as coordenadas para o endereço do usuário ${uid}. O perfil será salvo sem elas.`);
+  }
+
+  // 4. O array de endereços agora contém o objeto completo.
+  const addressesArray = [finalAddress];
+
+  // =====================================================================
+  // ✅ FIM DA LÓGICA DE ENDEREÇO E GEOCODIFICAÇÃO
+  // =====================================================================
+
 
   const finalHealthProfile = {
-    // ✅ CORREÇÃO: Lemos os dados do objeto 'hp_raw' em vez de 'rawProfile'.
-    sex: hp_raw.sex, // Já vem como 'male' ou 'female'
+    sex: hp_raw.sex,
     dateOfBirth: hp_raw.dateOfBirth,
     height: parseInt(String(hp_raw.height).replace(/\D/g, '') || '0', 10),
     weight: parseFloat(String(hp_raw.weight).replace(/,/g, '.').replace(/[^\d.-]/g, '') || '0'),
@@ -887,7 +912,6 @@ async function _processProfileForFirestore(rawProfile: any, uid: string, isFinal
     currentMedications: currentMedicationsResult.items,
   };
 
-  logger.log("HealthProfile final a ser salvo:", JSON.stringify(finalHealthProfile, null, 2));
 
   return {
     uid: uid,
@@ -896,7 +920,7 @@ async function _processProfileForFirestore(rawProfile: any, uid: string, isFinal
     photoURL: permanentPhotoURL,
     nationalId: rawProfile.nationalId.replace(/\D/g, ""),
     phone: formatPhone(rawProfile.phone),
-    addresses: addressesArray,
+    addresses: addressesArray, // O array agora contém o endereço com coordenadas
     healthProfile: finalHealthProfile,
     timestamp: admin.firestore.FieldValue.serverTimestamp(),
   };

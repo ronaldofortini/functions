@@ -6,7 +6,7 @@ import { onDocumentWritten } from "firebase-functions/v2/firestore";
 import Holidays from "date-holidays";
 // import { onCall } from "firebase-functions/v2/https";
 // import * as client from "@sendgrid/client";
-import { Diet } from "../core/models";
+import { Diet } from "../../../models/models";
 
 import { _initiatePixRefundLogic, formatFirstName, formatOrderIdForDisplay, getDeliverySchedule, sendEmail, sendSms } from "../core/utils";
 import {
@@ -165,8 +165,17 @@ export const onDietStatusChange = onDocumentWritten("diets/{dietId}", async (eve
                     sendEmail(userEmail, subject1, html1),
                     // sendSms(userPhone, sms1) //ATIVAR AO ENTRAR EM PROD
                 ]);
+                let orderTimestamp: admin.firestore.Timestamp;
+                if (afterData.timestamp instanceof admin.firestore.Timestamp) {
+                    // Se for, apenas atribua o valor.
+                    orderTimestamp = afterData.timestamp;
+                } else {
+                    // Se não for (provavelmente é um Date), converta-o para um Timestamp.
+                    orderTimestamp = admin.firestore.Timestamp.fromDate(afterData.timestamp as Date);
+                }
+                const schedule = getDeliverySchedule(orderTimestamp);
 
-                const schedule = getDeliverySchedule(afterData.timestamp as admin.firestore.Timestamp);
+                
                 if (schedule.scheduleType === 'immediate') {
                     await new Promise(resolve => setTimeout(resolve, 6000));
                     const subject2 = `🔎 Encontrando um Picker para separar sua dieta, ${firstName}!`;
@@ -538,7 +547,7 @@ export const sendPendingPaymentReminders = onSchedule({
     const db = admin.firestore();
     const dietsRef = db.collection("diets");
     const now = admin.firestore.Timestamp.now();
-    
+
     // Calcula o tempo limite (20 minutos atrás)
     const tenMinutesAgo = admin.firestore.Timestamp.fromMillis(now.toMillis() - (10 * 60 * 1000));
 
@@ -549,7 +558,7 @@ export const sendPendingPaymentReminders = onSchedule({
         .where("currentStatus.status", "==", "pending")
         .where("timestamp", "<=", tenMinutesAgo)
         .where("pendingReminderSent", "==", false);
-    
+
     const snapshot = await query.get();
 
     if (snapshot.empty) {
@@ -558,7 +567,7 @@ export const sendPendingPaymentReminders = onSchedule({
     }
 
     logger.info(`Encontrados ${snapshot.docs.length} pedidos para enviar lembrete de pagamento.`);
-    
+
     const emailPromises: Promise<any>[] = [];
 
     for (const doc of snapshot.docs) {
@@ -575,7 +584,7 @@ export const sendPendingPaymentReminders = onSchedule({
 
         // Gera os links que o template de e-mail precisa
         const paymentLink = `https://colormind.com.br/orders?highlightDiet=${dietId}`;
-        
+
         // Este link aponta para a sua Cloud Function 'recalculateDietForCost'. 
         // O ideal é criar um endpoint de redirecionamento para não expor a URL da função.
         // Por agora, vamos usar um link direto para a página de pedidos com um parâmetro de ação.

@@ -1,7 +1,7 @@
 import * as admin from "firebase-admin";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { logger } from "firebase-functions";
-import { Diet, Food } from "../core/models";
+import { Diet, Food } from "../../../models/models";
 import { _initiatePixRefundLogic, formatFirstName, sendEmail, calculateBusinessHoursElapsed } from "../core/utils";
 import { getSeparationDelayedWarningEmailHTML, getSeparationFinalWarningEmailHTML, getScheduledDeliveryReminderEmailHTML, getNotifyingPickerEmailHTML } from "../core/email-templates";
 import { callAI } from "../core/utils";
@@ -227,7 +227,16 @@ export const monitorAndCancelStaleOrders = onSchedule({
         const diet = doc.data() as Diet;
         if (diet.refundDetails) return; // Pula se já tiver estorno
 
-        const statusTimestamp = diet.currentStatus.timestamp as admin.firestore.Timestamp;
+        let statusTimestamp: admin.firestore.Timestamp;
+
+        // 2. Verifique o tipo de 'diet.currentStatus.timestamp' de forma segura.
+        if (diet.currentStatus.timestamp instanceof admin.firestore.Timestamp) {
+            // Se já for um Timestamp, apenas atribua.
+            statusTimestamp = diet.currentStatus.timestamp;
+        } else {
+            // Se for um Date (ou outro tipo), converta-o para um Timestamp.
+            statusTimestamp = admin.firestore.Timestamp.fromDate(diet.currentStatus.timestamp as Date);
+        }
 
         // ======================= LÓGICA CORRIGIDA AQUI =======================
         // 1. Calcula as horas úteis decorridas desde a mudança de status
@@ -296,8 +305,19 @@ export const checkStalledSeparations = onSchedule({
 
     for (const doc of snapshot.docs) {
         const diet = doc.data() as Diet;
-        const statusTimestamp = (diet.currentStatus.timestamp as admin.firestore.Timestamp).toDate();
         const orderIdShort = `#${doc.id.slice(0, 8).toUpperCase()}`;
+
+        // Declara a variável que irá armazenar a data do status.
+        let statusTimestamp: Date;
+        const timestampFromDb = diet.currentStatus.timestamp;
+
+        // Faz a conversão segura de Timestamp do Firestore para um Date do JavaScript.
+        if (timestampFromDb instanceof admin.firestore.Timestamp) {
+            statusTimestamp = timestampFromDb.toDate();
+        } else {
+            // Se já for um Date, apenas o atribui.
+            statusTimestamp = timestampFromDb as Date;
+        }
 
         if (statusTimestamp < sixtyMinutesAgo) {
             const alertId = `${doc.id}_separation_60m`;

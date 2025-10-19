@@ -4,7 +4,7 @@ import { onDocumentWritten } from "firebase-functions/v2/firestore";
 import { logger } from "firebase-functions";
 import { v4 as uuidv4 } from 'uuid';
 import Holidays from "date-holidays";
-import { InterpretedPrompt, dietGoalDictionaryPT } from "../core/models";
+import { } from "../core/models";
 import { callAI, formatActivityLevel } from "../core/utils"
 // Imports da Lógica de Negócio
 import { interpretUserPrompt } from "./prompt-interpreter";
@@ -12,8 +12,8 @@ import { calculateNutritionalTargets } from "./nutrition-calculator";
 import { fetchAllFoods, filterFoodListWithAI, selectAndQuantifyFoods, generateDietExplanationAI, _generateFoodExplanationsInOneShot } from "./diet-logic";
 import { calculateAge, formatFirstName, sendEmail } from "../core/utils";
 // Imports de Modelos e Funções Utilitárias
-import { Diet, FoodItem, Address, UserProfile, HealthProfile, JobDiet } from "../core/models";
-import {getRecalculatedDietEmailHTML} from './../core/email-templates'
+import { Diet, FoodItem, Address, UserProfile, HealthProfile, JobDiet, InterpretedPrompt, dietGoalDictionaryPT } from "../../../models/models";
+import { getRecalculatedDietEmailHTML } from './../core/email-templates'
 import { calculateDietMetrics, generateSequentialDietId, sanitizeNaNValues, _getRidePriceEstimateLogic, _generatePixChargeLogic, _initiatePixRefundLogic, getEfiAuthToken, getEfiCertificates, httpsRequest } from "../core/utils";
 const db = admin.firestore();
 
@@ -452,9 +452,9 @@ export const processDietJobStep = onDocumentWritten({
                     totalEstimatedFoodsPrice: parseFloat(totalEstimatedPrice.toFixed(2)),
                     totalEstimatedDeliveryPrice: parseFloat(rideEstimate.highEstimate.toFixed(2)),
                     totalPrice: parseFloat(finalTotalPrice.toFixed(2)),
-                    currentStatus: { status: "pending", timestamp: admin.firestore.Timestamp.now() },
-                    statusHistory: [{ status: "pending", timestamp: admin.firestore.Timestamp.now() }],
-                    timestamp: admin.firestore.Timestamp.now(),
+                    currentStatus: { status: "pending", timestamp: new Date() },
+                    statusHistory: [{ status: "pending", timestamp: new Date() }],
+                    timestamp: new Date(),
                     paymentDetails,
                     foodItemsCount: finalSelectedFoods.length,
                     totalEstimatedWeightInGrams: totalEstimatedWeightInGrams,
@@ -1040,7 +1040,13 @@ export const getConfirmedOrderStatus = onCall({ region: "southamerica-east1" }, 
 
         // 1. PRIORIDADE MÁXIMA: Verifica se há um agendamento explícito no banco de dados.
         if (diet.deliveryScheduledFor) {
-            const scheduledDate = (diet.deliveryScheduledFor as admin.firestore.Timestamp).toDate();
+            let scheduledDate: Date;
+            const scheduledValue = diet.deliveryScheduledFor as any;
+            if (scheduledValue && typeof scheduledValue.toDate === 'function') {
+                scheduledDate = scheduledValue.toDate(); // Converte de Timestamp para Date
+            } else {
+                scheduledDate = scheduledValue; // Já é um Date, apenas atribui
+            }
 
             // Formata a data para ser mais amigável
             const formattedDate = scheduledDate.toLocaleDateString('pt-BR', {

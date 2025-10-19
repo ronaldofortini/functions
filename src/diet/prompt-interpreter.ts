@@ -1,6 +1,6 @@
 import { https, logger } from "firebase-functions";
 import { getAvailableFoodNames } from "./diet-logic";
-import { InterpretedPrompt } from "../core/models";
+import { InterpretedPrompt } from "../../../models/models";
 import { callAI } from "../core/utils"
 
 export async function interpretUserPrompt(

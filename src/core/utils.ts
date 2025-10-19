@@ -5,7 +5,7 @@ import * as https from "https";
 import { getSecrets } from "./secrets";
 import * as admin from "firebase-admin";
 import { HttpsError } from "firebase-functions/v2/https";
-import { NutritionalInfo, FoodItem, Food, Address, Coordinates } from "./models";
+import { NutritionalInfo, FoodItem, Food, Address, Coordinates } from "../../../models/models";
 import { v4 as uuidv4 } from 'uuid';
 import Holidays from "date-holidays";
 // import { GoogleGenerativeAI } from "@google/generative-ai";
@@ -14,7 +14,7 @@ import OpenAI from "openai";
 const sgClient = require("@sendgrid/client");
 import { Twilio } from "twilio";
 import { GoogleGenAI } from '@google/genai';
-
+import { Client } from "@googlemaps/google-maps-services-js";
 
 
 // Função callAI atualizada para usar o Vertex AI
@@ -102,17 +102,58 @@ export async function callAI(prompt: string, aiProvider: 'GEMINI' | 'OPENAI', js
 }
 
 
-// Em algum lugar no seu backend, você teria uma função auxiliar como esta:
-export async function _geocodeAddress(address: Address): Promise<Coordinates> {
-    const addressString = `${address.street}, ${address.number}, ${address.neighborhood}, ${address.city}, ${address.state}`;
-    // Lógica para chamar a API de Geocodificação do Google Maps com a addressString
-    // Exemplo: const response = await googleMapsClient.geocode({ params: { address: addressString, key: 'SUA_API_KEY' } });
-    // const location = response.data.results[0].geometry.location;
-    // return { lat: location.lat, lon: location.lng };
-    
-    // Por enquanto, vamos retornar um mock para ilustrar:
-    console.log(`Geocodificando: ${addressString}`);
-    return { lat: -19.9584, lon: -44.1483 }; // Coordenadas de exemplo para Betim, MG
+/**
+ * Converte um objeto de endereço em coordenadas geográficas usando a API do Google Maps.
+ * Esta é a função centralizada para ser usada em todo o backend.
+ * @param address O objeto de endereço a ser geocodificado.
+ * @returns Uma Promise que resolve para um objeto Coordinates { lat, lon } ou null se não for encontrado.
+ */
+export async function _geocodeAddress(address: Partial<Address>): Promise<Coordinates | null> {
+    if (!address.street || !address.city || !address.state) {
+        logger.warn("Tentativa de geocodificar um endereço incompleto.", { address });
+        return null;
+    }
+
+    try {
+        const secrets = await getSecrets();
+        const apiKey = secrets.geocodingApiKey;
+
+        if (!apiKey) {
+            logger.error("A chave da API do Google Maps não foi encontrada no Secret Manager (googleMapsApiKey).");
+            return null;
+        }
+
+        const mapsClient = new Client({});
+        const addressString = `${address.street}, ${address.number || ''}, ${address.neighborhood || ''}, ${address.city}, ${address.state}, ${address.zipCode || ''}`;
+
+        const response = await mapsClient.geocode({
+            params: {
+                address: addressString,
+                key: apiKey,
+                region: 'BR', // Adiciona um viés para resultados no Brasil
+                language: 'pt-BR' // Retorna nomes em português
+            },
+        });
+
+        if (response.data.status === 'OK' && response.data.results.length > 0) {
+            const location = response.data.results[0].geometry.location;
+            return {
+                lat: location.lat,
+                lon: location.lng // A API do Google retorna 'lng', mapeamos para 'lon'
+            };
+        } else {
+            logger.warn(`Geocodificação falhou ou não encontrou resultados para o endereço: "${addressString}"`, { status: response.data.status });
+            return null;
+        }
+
+    } catch (error: any) {
+        logger.error("Erro CRÍTICO durante a chamada da API de Geocodificação do Google Maps:", {
+            errorMessage: error.message,
+            address: address,
+        });
+        // Retornamos null para não quebrar o fluxo principal (ex: cadastro de usuário)
+        return null;
+    }
 }
 
 
@@ -966,7 +1007,7 @@ export async function _generatePixChargeLogic(valor: string, pedidoId: string) {
       qrCodeImage: qrCodeResponse.imagemQrcode,
       qrCodeImageUrl: qrCodePublicUrl,
       copiaECola: qrCodeResponse.qrcode,
-      createdAt: admin.firestore.Timestamp.now()
+      createdAt: new Date()
     };
 
   } catch (error) {

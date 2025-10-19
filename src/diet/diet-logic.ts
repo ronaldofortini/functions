@@ -1,10 +1,9 @@
 // import * as functions from "firebase-functions";
 import { HttpsError } from "firebase-functions/v2/https";
 import * as admin from "firebase-admin";
-import { Food, NutritionalInfo, FoodItem, HealthProfile } from "../core/models";
+import { Food, NutritionalInfo, FoodItem, HealthProfile, InterpretedPrompt } from "../../../models/models";
 import { createEmptyNutritionalInfo } from "../core/utils";
 // import { GoogleGenerativeAI } from "@google/generative-ai"; // ALTERADO
-import { InterpretedPrompt } from "./../core/models";
 import { logger } from "firebase-functions";
 // import { getSecrets } from "../core/secrets";
 

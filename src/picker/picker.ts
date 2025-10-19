@@ -3,7 +3,7 @@ import { HttpsError, onCall } from "firebase-functions/v2/https";
 import { ImageAnnotatorClient } from "@google-cloud/vision";
 // import { VertexAI } from "@google-cloud/vertexai";
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { Diet, Food, FoodItem, HealthProfile, Address } from "../core/models";
+import { Diet, Food, FoodItem, HealthProfile, Address } from "../../../models/models";
 import { getSecrets } from "../core/secrets";
 import { _getRidePriceEstimateLogic, _initiatePixPaymentLogic, _initiatePixRefundLogic, formatFirstName, calculateTotalNutrients } from "../core/utils";
 import { filterFoodListWithAI, generateExplanationForSingleFood } from "../diet/diet-logic";
@@ -315,10 +315,11 @@ export const createPickerProfile = onCall({ memory: "512MiB" }, async (request) 
 
     try {
         const coordinates = await _geocodeAddress(baseAddressObject);
-        baseAddressObject.coordinates = coordinates; // Anexa as coordenadas ao objeto
+
+        baseAddressObject.coordinates = coordinates || undefined;
+
     } catch (geoError) {
         logger.error("Falha ao geocodificar o endereço do picker:", geoError);
-        // Decida como tratar o erro: pode lançar uma HttpsError ou salvar sem as coordenadas
         throw new HttpsError("internal", "Não foi possível validar as coordenadas do seu endereço.");
     }
 

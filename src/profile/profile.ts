@@ -3,13 +3,13 @@ import * as logger from "firebase-functions/logger";
 import * as admin from "firebase-admin";
 import { v4 as uuidv4 } from 'uuid';
 import sgMail = require("@sendgrid/mail");
-import { formatPhone, generateCode, getPercentageFromLevel, getLevelFromPercentage, _interpretHealthDataInternal, sendEmail, formatFirstName } from "../core/utils";
+import { formatPhone, generateCode, _geocodeAddress, getPercentageFromLevel, getLevelFromPercentage, _interpretHealthDataInternal, sendEmail, formatFirstName } from "../core/utils";
 import { getSecrets, twilioClient } from "../core/secrets";
 import { cpf } from 'cpf-cnpj-validator';
 import { getNewEmailConfirmationHTML, getOldEmailSecurityAlertHTML, getPasswordResetEmailHTML, getAccountDeletionConfirmationEmailHTML } from "../core/email-templates";
 // import { Twilio } from "twilio";
 import { onSchedule } from "firebase-functions/v2/scheduler"; // Importe onSchedule
-// import { UserProfile } from "../../../src/app/shared/models/user.model";
+import { Address } from "../../../models/models";
 
 
 
@@ -845,7 +845,7 @@ export const addAddress = onCall({ cpu: 1 }, async (request) => {
   if (!request.auth) throw new HttpsError("unauthenticated", "Autenticação requerida.");
 
   const uid = request.auth.uid;
-  const newAddress = request.data.address;
+  const newAddress: Address = request.data.address;
 
   if (!newAddress || !newAddress.street || !newAddress.zipCode) {
     throw new HttpsError("invalid-argument", "Dados do endereço incompletos.");
@@ -858,20 +858,22 @@ export const addAddress = onCall({ cpu: 1 }, async (request) => {
   const addresses = userData?.addresses || [];
 
   newAddress.id = uuidv4();
+  newAddress.isDefault = addresses.length === 0;
 
-  const isFirstAddress = addresses.length === 0;
-  newAddress.isDefault = isFirstAddress;
+  // ✅ 1. CHAMA A FUNÇÃO DE GEOCODIFICAÇÃO CENTRALIZADA
+  const coordinates = await _geocodeAddress(newAddress);
+
+  // ✅ 2. ATRIBUI AS COORDENADAS AO ENDEREÇO, CONVERTENDO NULL PARA UNDEFINED
+  newAddress.coordinates = coordinates || undefined;
 
   addresses.push(newAddress);
-
   await userDocRef.update({ addresses });
 
-  // A LINHA MAIS IMPORTANTE: Garanta que sua função está retornando este objeto completo
   return {
     success: true,
     message: "Endereço adicionado com sucesso.",
-    newAddress: newAddress, // <-- Crucial para o frontend
-    isFirstAddress: isFirstAddress
+    newAddress: newAddress,
+    isFirstAddress: newAddress.isDefault
   };
 });
 
@@ -880,7 +882,7 @@ export const updateAddress = onCall(async (request) => {
   if (!request.auth) throw new HttpsError("unauthenticated", "Autenticação requerida.");
 
   const uid = request.auth.uid;
-  const updatedAddress = request.data.address;
+  const updatedAddress: Address = request.data.address;
 
   if (!updatedAddress || !updatedAddress.id) {
     throw new HttpsError("invalid-argument", "ID do endereço não fornecido.");
@@ -895,7 +897,13 @@ export const updateAddress = onCall(async (request) => {
     throw new HttpsError("not-found", "Endereço não encontrado.");
   }
 
-  // Preserva o status 'isDefault' do objeto original
+  // ✅ 1. CHAMA A FUNÇÃO DE GEOCODIFICAÇÃO CENTRALIZADA PARA O ENDEREÇO ATUALIZADO
+  const coordinates = await _geocodeAddress(updatedAddress);
+
+  // ✅ 2. ATRIBUI AS COORDENADAS, CONVERTENDO NULL PARA UNDEFINED
+  updatedAddress.coordinates = coordinates || undefined;
+
+  // Preserva o status 'isDefault' do objeto original e atualiza o endereço no array
   updatedAddress.isDefault = addresses[addressIndex].isDefault;
   addresses[addressIndex] = updatedAddress;
 
