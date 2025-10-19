@@ -5,7 +5,7 @@ import * as https from "https";
 import { getSecrets } from "./secrets";
 import * as admin from "firebase-admin";
 import { HttpsError } from "firebase-functions/v2/https";
-import { NutritionalInfo, FoodItem, Food } from "./models";
+import { NutritionalInfo, FoodItem, Food, Address, Coordinates } from "./models";
 import { v4 as uuidv4 } from 'uuid';
 import Holidays from "date-holidays";
 // import { GoogleGenerativeAI } from "@google/generative-ai";
@@ -99,6 +99,20 @@ export async function callAI(prompt: string, aiProvider: 'GEMINI' | 'OPENAI', js
     }
   }
   throw new HttpsError("internal", `Falha na comunicação com a IA (${aiProvider}) após 3 tentativas.`);
+}
+
+
+// Em algum lugar no seu backend, você teria uma função auxiliar como esta:
+export async function _geocodeAddress(address: Address): Promise<Coordinates> {
+    const addressString = `${address.street}, ${address.number}, ${address.neighborhood}, ${address.city}, ${address.state}`;
+    // Lógica para chamar a API de Geocodificação do Google Maps com a addressString
+    // Exemplo: const response = await googleMapsClient.geocode({ params: { address: addressString, key: 'SUA_API_KEY' } });
+    // const location = response.data.results[0].geometry.location;
+    // return { lat: location.lat, lon: location.lng };
+    
+    // Por enquanto, vamos retornar um mock para ilustrar:
+    console.log(`Geocodificando: ${addressString}`);
+    return { lat: -19.9584, lon: -44.1483 }; // Coordenadas de exemplo para Betim, MG
 }
 
 

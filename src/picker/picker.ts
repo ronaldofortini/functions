@@ -3,18 +3,163 @@ import { HttpsError, onCall } from "firebase-functions/v2/https";
 import { ImageAnnotatorClient } from "@google-cloud/vision";
 // import { VertexAI } from "@google-cloud/vertexai";
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { Diet, Food, FoodItem, HealthProfile } from "../core/models";
+import { Diet, Food, FoodItem, HealthProfile, Address } from "../core/models";
 import { getSecrets } from "../core/secrets";
 import { _getRidePriceEstimateLogic, _initiatePixPaymentLogic, _initiatePixRefundLogic, formatFirstName, calculateTotalNutrients } from "../core/utils";
 import { filterFoodListWithAI, generateExplanationForSingleFood } from "../diet/diet-logic";
 import { getPickerRegistrationReceivedHTML, getNewProblemReportAlertEmailHTML, getPickerSupportConfirmationEmailHTML, getPickerProblemApologyEmailHTML, getSupportTicketAlertEmailHTML, getNewPickerForApprovalEmailHTML } from "../core/email-templates";
 import { logger } from "firebase-functions";
-import { sendEmail, formatOrderIdForDisplay, getMainMacronutrient, callAI } from "../core/utils";
+import { sendEmail, formatOrderIdForDisplay, getMainMacronutrient, callAI, _geocodeAddress } from "../core/utils";
 import { _verificarHorarioComercial } from "./../diet/diet";
 // import { cancelAndRefundOrder } from "../payments/payments";
 
 const visionClient = new ImageAnnotatorClient();
 const db = admin.firestore();
+
+
+interface Coordinates {
+    lat: number;
+    lon: number;
+}
+
+
+
+/**
+ * Calcula a distância em linha reta entre dois pontos geográficos usando a fórmula de Haversine.
+ * @param coords1 Coordenadas do primeiro ponto.
+ * @param coords2 Coordenadas do segundo ponto.
+ * @returns A distância em quilômetros.
+ */
+function haversineDistance(coords1: Coordinates, coords2: Coordinates): number {
+    const R = 6371; // Raio da Terra em km
+    const dLat = (coords2.lat - coords1.lat) * Math.PI / 180;
+    const dLon = (coords2.lon - coords1.lon) * Math.PI / 180;
+    const a =
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(coords1.lat * Math.PI / 180) * Math.cos(coords2.lat * Math.PI / 180) *
+        Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+}
+
+/**
+ * Busca dietas confirmadas, filtra por cidade (padrão) ou por raio de distância,
+ * e as ordena pela proximidade do endereço base do picker.
+ */
+export const getAvailableDietsForPicker = onCall({ region: "southamerica-east1", memory: "512MiB" }, async (request) => {
+    if (!request.auth) {
+        throw new HttpsError("unauthenticated", "Autenticação requerida.");
+    }
+    const pickerUid = request.auth.uid;
+
+    // ✅ CONTROLE DE LÓGICA:
+    // Mude para 'false' para usar a lógica de raio de distância (MAX_DISTANCE_KM).
+    const FILTER_BY_CITY = true;
+    const MAX_DISTANCE_KM = 15; // Usado apenas se FILTER_BY_CITY for false.
+
+    try {
+        // 1. Buscar os dados base do picker (endereço e coordenadas)
+        const pickerDocRef = db.collection("users").doc(pickerUid);
+        const pickerDoc = await pickerDocRef.get();
+        const pickerData = pickerDoc.data();
+
+        const pickerAddress = pickerData?.picker?.baseAddress;
+        if (!pickerAddress || !pickerAddress.city) {
+            throw new HttpsError("failed-precondition", "Seu endereço base com cidade não foi encontrado. Por favor, atualize seu perfil.");
+        }
+
+        const pickerCoords = pickerAddress.coordinates;
+        if (!pickerCoords?.lat || !pickerCoords?.lon) {
+            logger.warn(`Picker ${pickerUid} está buscando dietas sem coordenadas para cálculo de distância.`);
+            // Não lançamos um erro aqui, pois a distância é secundária, mas alertamos.
+        }
+
+        let availableDiets: (Diet & { distance?: number })[] = [];
+        const dietsRef = db.collection("diets");
+
+        // =========================================================================
+        // ✅ NOVA LÓGICA: FILTRAGEM POR CIDADE (MAIS EFICIENTE)
+        // =========================================================================
+        if (FILTER_BY_CITY) {
+            logger.info(`Buscando dietas para o picker ${pickerUid} na cidade: ${pickerAddress.city}`);
+
+            // 2.A. Buscar dietas já filtradas pela cidade do picker no Firestore
+            const q = dietsRef
+                .where("currentStatus.status", "==", "confirmed")
+                .where("address.city", "==", pickerAddress.city); // Filtro principal no DB
+
+            const dietsSnapshot = await q.get();
+            availableDiets = dietsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Diet));
+
+            // =========================================================================
+            // 🚫 LÓGICA ANTIGA: FILTRAGEM POR RAIO DE DISTÂNCIA (MANTIDA)
+            // =========================================================================
+        } else {
+            logger.info(`Buscando dietas para o picker ${pickerUid} em um raio de ${MAX_DISTANCE_KM}km`);
+
+            // 2.B. Buscar TODAS as dietas confirmadas
+            const q = dietsRef.where("currentStatus.status", "==", "confirmed");
+            const dietsSnapshot = await q.get();
+            const allConfirmedDiets = dietsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Diet));
+
+            // 3.B. Filtrar em memória pela distância (menos eficiente)
+            availableDiets = allConfirmedDiets
+                // Passo 1: Garante que TODOS os objetos tenham a propriedade 'distance', mesmo que seja nula.
+                .map(diet => {
+                    const dietCoords = diet.address?.coordinates;
+                    if (pickerCoords && dietCoords?.lat && dietCoords?.lon) {
+                        const distance = haversineDistance(pickerCoords, dietCoords);
+                        // Retorna o objeto com a distância calculada.
+                        return { ...diet, distance };
+                    }
+                    // Retorna o objeto com 'distance: null' para manter uma estrutura consistente.
+                    return { ...diet, distance: null };
+                })
+                // Passo 2: Agora o filtro é mais simples e seguro, pois 'diet.distance' sempre existe.
+                .filter((diet): diet is Diet & { distance: number } => {
+                    // A condição agora verifica por 'null' e o compilador não reclama mais.
+                    return diet.distance !== null && diet.distance <= MAX_DISTANCE_KM;
+                });
+        }
+
+
+        // 4. Calcular distância (se ainda não foi calculada) e ordenar
+        const dietsWithDistance = availableDiets
+            .map(diet => {
+                // Se a distância ainda não foi calculada (caso do filtro por cidade), calcula agora.
+                if (diet.distance === undefined && pickerCoords && diet.address?.coordinates) {
+                    // Retorna um NOVO objeto com a distância adicionada
+                    return {
+                        ...diet,
+                        distance: haversineDistance(pickerCoords, diet.address.coordinates)
+                    };
+                }
+                // Retorna o objeto original (que pode ou não ter a distância)
+                return diet;
+            })
+            // ✅ CORREÇÃO: Adicionamos o "type guard" `(diet): diet is Diet & { distance: number } => ...`
+            // Isso garante ao TypeScript que, após o filtro, todos os objetos terão a propriedade 'distance'.
+            .filter((diet): diet is Diet & { distance: number } =>
+                diet.distance !== undefined && diet.distance !== null
+            );
+
+        // 5. Ordenar as dietas filtradas pela distância
+        // Agora o TypeScript não reclama mais, e podemos simplificar a lógica do sort.
+        dietsWithDistance.sort((a, b) => a.distance - b.distance);
+
+        return { diets: dietsWithDistance };
+
+    } catch (error) {
+        logger.error(`Erro ao buscar dietas para o picker ${pickerUid}:`, error);
+        if (error instanceof HttpsError) throw error;
+        throw new HttpsError("internal", "Não foi possível buscar as dietas disponíveis.");
+    }
+});
+
+
+
+
+
 
 // =========================================================================
 // FUNÇÕES DE CADASTRO E VALIDAÇÃO DO PICKER
@@ -84,9 +229,6 @@ export const validatePickerDocument = onCall({ memory: "512MiB" }, async (reques
     }
 });
 
-/**
- * Salva os dados de um novo candidato a picker no Firestore e envia um e-mail de confirmação.
- */
 // export const createPickerProfile = onCall({ memory: "512MiB" }, async (request) => {
 //     if (!request.auth) throw new HttpsError("unauthenticated", "A função precisa ser chamada por um usuário autenticado.");
 //     const uid = request.auth.uid;
@@ -156,11 +298,11 @@ export const createPickerProfile = onCall({ memory: "512MiB" }, async (request) 
     if (!data || !data.pixKey || !data.documentFrontUrl || !data.pixKeyHolderName) {
         throw new HttpsError("invalid-argument", "Dados para o perfil de picker estão incompletos.");
     }
-
+    const db = admin.firestore();
     const userDocRef = db.collection("users").doc(uid);
 
-    // ✅ MUDANÇA PRINCIPAL: O objeto 'pickerData' agora segue a nova estrutura aninhada.
-    const baseAddressObject = {
+    const baseAddressObject: Address = {
+        id: db.collection('users').doc().id,
         street: data.street,
         number: data.number || 'S/N',
         complement: data.complement || '',
@@ -170,6 +312,15 @@ export const createPickerProfile = onCall({ memory: "512MiB" }, async (request) 
         zipCode: data.zipCode,
         isDefault: true,
     };
+
+    try {
+        const coordinates = await _geocodeAddress(baseAddressObject);
+        baseAddressObject.coordinates = coordinates; // Anexa as coordenadas ao objeto
+    } catch (geoError) {
+        logger.error("Falha ao geocodificar o endereço do picker:", geoError);
+        // Decida como tratar o erro: pode lançar uma HttpsError ou salvar sem as coordenadas
+        throw new HttpsError("internal", "Não foi possível validar as coordenadas do seu endereço.");
+    }
 
 
     const pickerData = {

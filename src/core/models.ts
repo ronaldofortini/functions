@@ -405,6 +405,11 @@ export const tagDictionary: { [key: string]: string } = {
     processed: "processed", ultra_processed: "ultra_processed",
 };
 
+export interface Coordinates {
+    lat: number;
+    lon: number; // ou lng, como preferir
+}
+
 export interface Address {
     id: string;
     street: string;
@@ -415,6 +420,7 @@ export interface Address {
     state: string;
     zipCode: string;
     isDefault?: boolean;
+    coordinates?: Coordinates;
 }
 
 export interface HealthProfile {
