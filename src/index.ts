@@ -1,3 +1,5 @@
+require('module-alias/register');
+
 import * as admin from "firebase-admin";
 
 admin.initializeApp();

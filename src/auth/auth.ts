@@ -10,7 +10,7 @@ import { getWelcomeEmailHTML, getNewUserAdminAlertEmailHTML, getRegistrationStar
 import * as logger from "firebase-functions/logger";
 import { onDocumentCreated } from "firebase-functions/v2/firestore";
 import sgMail = require("@sendgrid/mail");
-import { Address } from "../../../models/models";
+import { Address } from "@models/models";
 // const { onUserCreated } = require("firebase-functions/v2/auth");
 // import * as functions from "firebase-functions/v1"; // Usando V1 para o gatilho de auth
 

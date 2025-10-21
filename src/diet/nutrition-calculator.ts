@@ -1,5 +1,5 @@
 import { https } from "firebase-functions";
-import { HealthProfile, NutritionalInfo } from "../../../models/models";
+import { HealthProfile, NutritionalInfo } from "@models/models";
 
 interface Modifier {
   multipliers?: Partial<NutritionalInfo>;

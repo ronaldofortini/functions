@@ -2,7 +2,7 @@ import * as admin from "firebase-admin";
 import { HttpsError, onCall, onRequest } from "firebase-functions/v2/https";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { logger } from "firebase-functions";
-import { Diet } from "../../../models/models";
+import { Diet } from "@models/models";
 import { getEfiAuthToken, getEfiCertificates, httpsRequest, parsePix, _initiatePixRefundLogic } from "../core/utils";
 import { getSecrets } from "../core/secrets";
 import { v4 as uuidv4 } from 'uuid';

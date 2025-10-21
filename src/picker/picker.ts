@@ -3,7 +3,7 @@ import { HttpsError, onCall } from "firebase-functions/v2/https";
 import { ImageAnnotatorClient } from "@google-cloud/vision";
 // import { VertexAI } from "@google-cloud/vertexai";
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { Diet, Food, FoodItem, HealthProfile, Address } from "../../../models/models";
+import { Diet, Food, FoodItem, HealthProfile, Address } from "@models/models";
 import { getSecrets } from "../core/secrets";
 import { _getRidePriceEstimateLogic, _initiatePixPaymentLogic, _initiatePixRefundLogic, formatFirstName, calculateTotalNutrients } from "../core/utils";
 import { filterFoodListWithAI, generateExplanationForSingleFood } from "../diet/diet-logic";
@@ -17,37 +17,7 @@ const visionClient = new ImageAnnotatorClient();
 const db = admin.firestore();
 
 
-interface Coordinates {
-    lat: number;
-    lon: number;
-}
 
-
-
-/**
- * Calcula a distância em linha reta entre dois pontos geográficos usando a fórmula de Haversine.
- * @param coords1 Coordenadas do primeiro ponto.
- * @param coords2 Coordenadas do segundo ponto.
- * @returns A distância em quilômetros.
- */
-function haversineDistance(coords1: Coordinates, coords2: Coordinates): number {
-    const R = 6371; // Raio da Terra em km
-    const dLat = (coords2.lat - coords1.lat) * Math.PI / 180;
-    const dLon = (coords2.lon - coords1.lon) * Math.PI / 180;
-    const a =
-        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-        Math.cos(coords1.lat * Math.PI / 180) * Math.cos(coords2.lat * Math.PI / 180) *
-        Math.sin(dLon / 2) * Math.sin(dLon / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return R * c;
-}
-
-interface RequestData {
-    coordinates: {
-        lat: number;
-        lon: number;
-    };
-}
 
 /**
  * Busca dietas confirmadas, filtra por cidade (padrão) ou por raio de distância,
@@ -57,6 +27,9 @@ export const getAvailableDietsForPicker = onCall(
     { region: "southamerica-east1", memory: "512MiB" },
     async (request) => {
         // 1. Verificar Autenticação
+        logger.info("--- VERIFICAÇÃO DEPLOY V3: A NOVA FUNÇÃO ESTÁ RODANDO  ---");
+
+        
         if (!request.auth) {
             logger.warn("Chamada não autenticada para getAvailableDietsForPicker.");
             throw new HttpsError("unauthenticated", "Autenticação requerida.");
@@ -128,7 +101,37 @@ export const getAvailableDietsForPicker = onCall(
     }
 );
 
+interface Coordinates {
+    lat: number;
+    lon: number;
+}
 
+
+
+/**
+ * Calcula a distância em linha reta entre dois pontos geográficos usando a fórmula de Haversine.
+ * @param coords1 Coordenadas do primeiro ponto.
+ * @param coords2 Coordenadas do segundo ponto.
+ * @returns A distância em quilômetros.
+ */
+function haversineDistance(coords1: Coordinates, coords2: Coordinates): number {
+    const R = 6371; // Raio da Terra em km
+    const dLat = (coords2.lat - coords1.lat) * Math.PI / 180;
+    const dLon = (coords2.lon - coords1.lon) * Math.PI / 180;
+    const a =
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(coords1.lat * Math.PI / 180) * Math.cos(coords2.lat * Math.PI / 180) *
+        Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+}
+
+interface RequestData {
+    coordinates: {
+        lat: number;
+        lon: number;
+    };
+}
 
 
 

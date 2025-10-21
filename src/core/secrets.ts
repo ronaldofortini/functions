@@ -1,5 +1,5 @@
 import * as logger from "firebase-functions/logger";
-import sgMail = require("@sendgrid/mail");
+// import sgMail = require("@sendgrid/mail"); // <- REMOVA ESTA LINHA
 import { Twilio } from "twilio";
 
 // A interface permanece a mesma
@@ -22,10 +22,12 @@ export interface ApiSecrets {
 
 // O cache continua sendo essencial
 let apiSecrets: ApiSecrets | undefined;
-export let twilioClient: Twilio | undefined;
+// REMOVE a inicialização do twilioClient daqui também, para seguir o mesmo padrão
+export let twilioClient: Twilio | undefined; // <- MANTENHA A DECLARAÇÃO, REMOVA A ATRIBUIÇÃO
 
 /**
- * Busca todos os segredos das variáveis de ambiente e inicializa os clientes de API.
+ * Busca todos os segredos das variáveis de ambiente.
+ * A inicialização dos clientes de API foi removida daqui.
  */
 export async function getSecrets(): Promise<ApiSecrets> {
   
@@ -54,22 +56,24 @@ export async function getSecrets(): Promise<ApiSecrets> {
       geocodingApiKey: process.env.GEOCODING_API_KEY
     };
 
-    // A lógica de inicialização dos clientes permanece a mesma
-    if (newSecrets.sendgridKey) {
-      sgMail.setApiKey(newSecrets.sendgridKey);
-      logger.info("Chave do SendGrid configurada com sucesso.");
+    // --- REMOVA TODO O BLOCO DE INICIALIZAÇÃO DAQUI ---
+    /* if (newSecrets.sendgridKey) {
+      // sgMail.setApiKey(newSecrets.sendgridKey); // <- REMOVIDO
+      // logger.info("Chave do SendGrid configurada com sucesso."); // <- REMOVIDO
     } else {
-      logger.warn("Chave do SendGrid não encontrada nas variáveis de ambiente.");
+      logger.warn("Chave do SendGrid não encontrada nas variáveis de ambiente."); // <- REMOVIDO (O aviso já acontece no deploy)
     }
 
     if (newSecrets.twilioSid && newSecrets.twilioToken && !twilioClient) {
-      logger.info("Inicializando cliente Twilio...");
-      twilioClient = new Twilio(newSecrets.twilioSid, newSecrets.twilioToken);
+      // logger.info("Inicializando cliente Twilio..."); // <- REMOVIDO
+      // twilioClient = new Twilio(newSecrets.twilioSid, newSecrets.twilioToken); // <- REMOVIDO
     }
+    */
+    // --- FIM DA REMOÇÃO ---
     
     // Salva no cache global
     apiSecrets = newSecrets;
-    logger.info("Segredos e clientes carregados e cacheados com sucesso.");
+    logger.info("Segredos carregados e cacheados com sucesso (sem inicialização de clientes).");
     return apiSecrets;
 
   } catch (error) {
