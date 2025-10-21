@@ -11,7 +11,7 @@ import { calculateNutritionalTargets } from "./nutrition-calculator";
 import { fetchAllFoods, filterFoodListWithAI, selectAndQuantifyFoods, generateDietExplanationAI, _generateFoodExplanationsInOneShot } from "./diet-logic";
 import { calculateAge, formatFirstName, sendEmail } from "../core/utils";
 // Imports de Modelos e Funções Utilitárias
-import { Diet, FoodItem, Address, UserProfile, HealthProfile, JobDiet, InterpretedPrompt, dietGoalDictionaryPT } from "@models/models";
+import { Diet, FoodItem, Address, UserProfile, HealthProfile, JobDiet, InterpretedPrompt, dietGoalDictionaryPT } from  "../models/models";
 import { getRecalculatedDietEmailHTML } from './../core/email-templates'
 import { calculateDietMetrics, generateSequentialDietId, sanitizeNaNValues, _getRidePriceEstimateLogic, _generatePixChargeLogic, _initiatePixRefundLogic, getEfiAuthToken, getEfiCertificates, httpsRequest } from "../core/utils";
 const db = admin.firestore();

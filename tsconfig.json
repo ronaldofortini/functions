@@ -11,10 +11,10 @@
     "target": "es2017",
     "resolveJsonModule": true,
     // "rootDir": "src", // <-- REMOVA OU COMENTE ESTA LINHA
-    "baseUrl": ".",
-    "paths": {
-      "@models/*": ["../models/*"]
-    }
+    // "baseUrl": ".",
+    // "paths": {
+    //   "@models/*": ["../models/*"]
+    // }
   },
   "compileOnSave": true,
   "include": [

@@ -5,7 +5,7 @@ import * as https from "https";
 import { getSecrets } from "./secrets";
 import * as admin from "firebase-admin";
 import { HttpsError } from "firebase-functions/v2/https";
-import { NutritionalInfo, FoodItem, Food, Address, Coordinates } from "@models/models";
+import { NutritionalInfo, FoodItem, Food, Address, Coordinates } from "../models/models";
 import { v4 as uuidv4 } from 'uuid';
 import Holidays from "date-holidays";
 // import { GoogleGenerativeAI } from "@google/generative-ai";

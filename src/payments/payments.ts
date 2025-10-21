@@ -2,7 +2,7 @@ import * as admin from "firebase-admin";
 import { HttpsError, onCall, onRequest } from "firebase-functions/v2/https";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { logger } from "firebase-functions";
-import { Diet } from "@models/models";
+import { Diet } from "../models/models";
 import { getEfiAuthToken, getEfiCertificates, httpsRequest, parsePix, _initiatePixRefundLogic } from "../core/utils";
 import { getSecrets } from "../core/secrets";
 import { v4 as uuidv4 } from 'uuid';
@@ -656,7 +656,7 @@ export const payForDiet = onCall({ cpu: 1 }, async (request) => {
         const finalResult = await db.runTransaction(async (transaction) => {
             const userDocRef = db.collection('users').doc(pickerUid);
             const userDoc = await transaction.get(userDocRef);
-            if (!userDoc.exists || userDoc.data()?.picker?.role !== 'picker') {
+            if (!userDoc.exists || userDoc.data()?.picker?.registrationInfo.role !== 'picker') {
                 throw new HttpsError("permission-denied", "Você não tem permissão de picker.");
             }
 

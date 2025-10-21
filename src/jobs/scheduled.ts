@@ -1,7 +1,7 @@
 import * as admin from "firebase-admin";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { logger } from "firebase-functions";
-import { Diet, Food } from "@models/models";
+import { Diet, Food } from "../models/models";
 import { _initiatePixRefundLogic, formatFirstName, sendEmail, calculateBusinessHoursElapsed } from "../core/utils";
 import { getSeparationDelayedWarningEmailHTML, getSeparationFinalWarningEmailHTML, getScheduledDeliveryReminderEmailHTML, getNotifyingPickerEmailHTML } from "../core/email-templates";
 import { callAI } from "../core/utils";

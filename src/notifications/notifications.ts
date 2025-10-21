@@ -6,7 +6,7 @@ import { onDocumentWritten } from "firebase-functions/v2/firestore";
 import Holidays from "date-holidays";
 // import { onCall } from "firebase-functions/v2/https";
 // import * as client from "@sendgrid/client";
-import { Diet } from "@models/models";
+import { Diet } from "../models/models";
 
 import { _initiatePixRefundLogic, formatFirstName, formatOrderIdForDisplay, getDeliverySchedule, sendEmail, sendSms } from "../core/utils";
 import {

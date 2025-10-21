@@ -9,7 +9,7 @@ import { cpf } from 'cpf-cnpj-validator';
 import { getNewEmailConfirmationHTML, getOldEmailSecurityAlertHTML, getPasswordResetEmailHTML, getAccountDeletionConfirmationEmailHTML } from "../core/email-templates";
 // import { Twilio } from "twilio";
 import { onSchedule } from "firebase-functions/v2/scheduler"; // Importe onSchedule
-import { Address } from "@models/models";
+import { Address } from "../models/models";
 
 
 

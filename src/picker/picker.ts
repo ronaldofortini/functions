@@ -3,7 +3,7 @@ import { HttpsError, onCall } from "firebase-functions/v2/https";
 import { ImageAnnotatorClient } from "@google-cloud/vision";
 // import { VertexAI } from "@google-cloud/vertexai";
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { Diet, Food, FoodItem, HealthProfile, Address } from "@models/models";
+import { Diet, Food, FoodItem, HealthProfile, Address } from "../models/models";
 import { getSecrets } from "../core/secrets";
 import { _getRidePriceEstimateLogic, _initiatePixPaymentLogic, _initiatePixRefundLogic, formatFirstName, calculateTotalNutrients } from "../core/utils";
 import { filterFoodListWithAI, generateExplanationForSingleFood } from "../diet/diet-logic";
