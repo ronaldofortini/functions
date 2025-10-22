@@ -1106,6 +1106,65 @@ export const confirmDietDelivered = onCall({ region: "southamerica-east1", cpu: 
 
 
 
+
+
+// A função de reverter permanece a mesma
+// =========================================================================
+
+export const revertSubstitution = onCall({ region: "southamerica-east1" }, async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Usuário não autenticado.");
+
+    const { dietId, orderItemId } = request.data as { dietId: string; orderItemId: string; };
+    if (!dietId || !orderItemId) throw new HttpsError("invalid-argument", "Dados insuficientes.");
+
+    const dietDocRef = db.collection("diets").doc(dietId);
+
+    const dietDoc = await dietDocRef.get();
+    if (!dietDoc.exists) throw new HttpsError("not-found", "O pedido não foi encontrado.");
+
+    const dietData = dietDoc.data() as Diet;
+    if (dietData.picker?.id !== request.auth.uid) throw new HttpsError("permission-denied", "Acesso negado.");
+
+    const currentFoods = dietData.selectedFoods || [];
+    const itemIndex = currentFoods.findIndex(item => item.orderItemId === orderItemId && item.isSubstituted);
+    if (itemIndex === -1) throw new HttpsError("not-found", "O item substituído não foi encontrado.");
+
+    const itemToRevert = currentFoods[itemIndex];
+    if (!itemToRevert.originalFood) throw new HttpsError("failed-precondition", "Não há um alimento original para restaurar.");
+
+    const revertedItem: FoodItem = {
+        ...itemToRevert,
+        food: itemToRevert.originalFood,
+        quantity: itemToRevert.originalFood.quantity,
+        isSubstituted: false,
+    };
+    delete revertedItem.originalFood;
+
+    currentFoods[itemIndex] = revertedItem;
+    await dietDocRef.update({ selectedFoods: currentFoods });
+
+    return { success: true, message: "Substituição revertida!" };
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 /**
  * Reverte uma substituição, restaurando o item original na lista de compras.
  */
@@ -1193,7 +1252,7 @@ async function filterFoodListWithAICached(allFoods: Food[], healthProfile: Healt
 // --- Constantes Globais de Configuração ---
 const MAX_CALORIC_DEVIATION_PERCENT = 0.35;
 const MAX_CALORIC_DEVIATION_PERCENT_FIXED = 0.15;
-const ABSOLUTE_MINIMUM_QUANTITY = 5;
+const ABSOLUTE_MINIMUM_QUANTITY = 1;
 const ROUNDING_STEP = 5;
 const TOP_N_FOR_AI_REFINEMENT = 4;
 
@@ -1563,40 +1622,3 @@ export const findAndReplaceSubstitute = onCall({ region: "southamerica-east1", m
 
 
 
-// A função de reverter permanece a mesma
-// =========================================================================
-
-export const revertSubstitution = onCall({ region: "southamerica-east1" }, async (request) => {
-    if (!request.auth) throw new HttpsError("unauthenticated", "Usuário não autenticado.");
-
-    const { dietId, orderItemId } = request.data as { dietId: string; orderItemId: string; };
-    if (!dietId || !orderItemId) throw new HttpsError("invalid-argument", "Dados insuficientes.");
-
-    const dietDocRef = db.collection("diets").doc(dietId);
-
-    const dietDoc = await dietDocRef.get();
-    if (!dietDoc.exists) throw new HttpsError("not-found", "O pedido não foi encontrado.");
-
-    const dietData = dietDoc.data() as Diet;
-    if (dietData.picker?.id !== request.auth.uid) throw new HttpsError("permission-denied", "Acesso negado.");
-
-    const currentFoods = dietData.selectedFoods || [];
-    const itemIndex = currentFoods.findIndex(item => item.orderItemId === orderItemId && item.isSubstituted);
-    if (itemIndex === -1) throw new HttpsError("not-found", "O item substituído não foi encontrado.");
-
-    const itemToRevert = currentFoods[itemIndex];
-    if (!itemToRevert.originalFood) throw new HttpsError("failed-precondition", "Não há um alimento original para restaurar.");
-
-    const revertedItem: FoodItem = {
-        ...itemToRevert,
-        food: itemToRevert.originalFood,
-        quantity: itemToRevert.originalFood.quantity,
-        isSubstituted: false,
-    };
-    delete revertedItem.originalFood;
-
-    currentFoods[itemIndex] = revertedItem;
-    await dietDocRef.update({ selectedFoods: currentFoods });
-
-    return { success: true, message: "Substituição revertida!" };
-});
