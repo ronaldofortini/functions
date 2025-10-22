@@ -29,7 +29,7 @@ export const getAvailableDietsForPicker = onCall(
         // 1. Verificar Autenticação
         logger.info("--- VERIFICAÇÃO DEPLOY V3: A NOVA FUNÇÃO ESTÁ RODANDO  ---");
 
-        
+
         if (!request.auth) {
             logger.warn("Chamada não autenticada para getAvailableDietsForPicker.");
             throw new HttpsError("unauthenticated", "Autenticação requerida.");
@@ -45,7 +45,7 @@ export const getAvailableDietsForPicker = onCall(
                 "Coordenadas de localização ausentes ou inválidas."
             );
         }
-        
+
         const pickerCoords = data.coordinates;
         const MAX_DISTANCE_KM = 15; // Defina seu raio máximo de busca
 
@@ -62,9 +62,9 @@ export const getAvailableDietsForPicker = onCall(
                 return { diets: [] };
             }
 
-            const allConfirmedDiets = dietsSnapshot.docs.map(doc => ({ 
-                id: doc.id, 
-                ...doc.data() 
+            const allConfirmedDiets = dietsSnapshot.docs.map(doc => ({
+                id: doc.id,
+                ...doc.data()
             } as Diet));
 
             // 4. Filtrar em memória pela distância
@@ -89,7 +89,7 @@ export const getAvailableDietsForPicker = onCall(
             availableDiets.sort((a, b) => a.distance - b.distance);
 
             logger.info(`Retornando ${availableDiets.length} dietas para o picker ${pickerUid}.`);
-            
+
             // 6. Retornar as dietas
             return { diets: availableDiets };
 
@@ -1144,7 +1144,7 @@ export const confirmDietDelivered = onCall({ region: "southamerica-east1", cpu: 
 //     return { success: true, message: "Substituição revertida!" };
 // });
 
-
+// Interfaces locais
 type TotalNutrientsProfile = {
     totalEnergy: number;
     totalProtein: number;
@@ -1152,17 +1152,14 @@ type TotalNutrientsProfile = {
     totalFat: number;
 };
 
-// As funções e interfaces que já existiam e são usadas pela função principal
-// =========================================================================
-
 interface SubstituteRequestData {
     dietId: string;
-    originalFood: Food;
-    originalFoodQuantity: number;
+    originalFood: Food; // Inclui quantity original aqui
     triedSubstituteIds: string[];
     orderItemId: string;
 }
 
+// --- Cache de Alimentos ---
 let allFoodsCache: Food[] | null = null;
 let cacheTimestamp: number | null = null;
 const CACHE_DURATION_MS = 15 * 60 * 1000;
@@ -1170,7 +1167,6 @@ const CACHE_DURATION_MS = 15 * 60 * 1000;
 async function fetchAllFoodsCached(): Promise<Food[]> {
     const now = Date.now();
     if (allFoodsCache && cacheTimestamp && (now - cacheTimestamp < CACHE_DURATION_MS)) {
-        logger.info("Retornando a lista de alimentos do cache.");
         return allFoodsCache;
     }
     logger.info("Cache de alimentos expirado ou inexistente. Buscando no Firestore.");
@@ -1180,125 +1176,197 @@ async function fetchAllFoodsCached(): Promise<Food[]> {
     return allFoodsCache;
 }
 
+// --- Cache de Alimentos Permitidos por IA ---
 const allowedFoodsCache = new Map<string, string[]>();
 
-async function filterFoodListWithAICached(allFoods: Food[], healthProfile: HealthProfile, provider: 'GEMINI'): Promise<string[]> {
+async function filterFoodListWithAICached(allFoods: Food[], healthProfile: HealthProfile): Promise<string[]> {
     const profileKey = JSON.stringify(healthProfile);
     if (allowedFoodsCache.has(profileKey)) {
-        logger.info("Retornando lista de alimentos permitidos pela IA do cache.");
         return allowedFoodsCache.get(profileKey)!;
     }
-    logger.info("Cache de IA não encontrado para este perfil. Chamando a IA.");
-    const allowedFoodNames = await filterFoodListWithAI(allFoods, healthProfile, provider);
+    logger.info("Cache de IA não encontrado para este perfil. Chamando a IA para filtrar alimentos permitidos.");
+    const allowedFoodNames = await filterFoodListWithAI(allFoods, healthProfile, 'GEMINI');
     allowedFoodsCache.set(profileKey, allowedFoodNames);
     return allowedFoodNames;
 }
 
-function calculateEquivalentQuantity(originalTotalEnergy: number, substituteFood: Food): { equivalentQuantity: number } {
-    if (substituteFood.variableWeight === false) {
-        return { equivalentQuantity: substituteFood.quantity };
-    }
-    const substituteEnergyPerGram = (substituteFood.nutritional_info_per_100g.energy || 1) / 100;
-    const quantity = substituteEnergyPerGram > 0 ? Math.round(originalTotalEnergy / substituteEnergyPerGram) : 0;
-    return { equivalentQuantity: quantity };
-}
+// --- Constantes Globais de Configuração ---
+const MAX_CALORIC_DEVIATION_PERCENT = 0.35;
+const MAX_CALORIC_DEVIATION_PERCENT_FIXED = 0.15;
+const ABSOLUTE_MINIMUM_QUANTITY = 5;
+const ROUNDING_STEP = 5;
+const TOP_N_FOR_AI_REFINEMENT = 4;
 
 
-function calculateSimilarityScore(originalTotals: TotalNutrientsProfile, substituteTotals: TotalNutrientsProfile): number {
+
+/**
+ * Calculates a similarity score between two nutrient profiles based on weighted differences.
+ * Lower scores indicate higher similarity. Returns Infinity if division by zero occurs or result is NaN.
+ * @param originalTotals The total nutrient profile of the original food item quantity.
+ * @param substituteTotals The total nutrient profile calculated for the substitute food quantity.
+ * @returns A numerical score representing the dissimilarity.
+ */
+function calculateSimilarityScore(
+    originalTotals: TotalNutrientsProfile,
+    substituteTotals: TotalNutrientsProfile
+): number {
+    // Weights to prioritize certain nutrient matches
     const WEIGHTS = {
         energy: 1.5,
         protein: 1.5,
         carbs: 1.0,
         fat: 0.8
     };
-    const energyDifference = Math.abs(originalTotals.totalEnergy - substituteTotals.totalEnergy) / (originalTotals.totalEnergy || 1);
-    const proteinDifference = Math.abs(originalTotals.totalProtein - substituteTotals.totalProtein) / (originalTotals.totalProtein || 1);
-    const carbsDifference = Math.abs(originalTotals.totalCarbs - substituteTotals.totalCarbs) / (originalTotals.totalCarbs || 1);
-    const fatDifference = Math.abs(originalTotals.totalFat - substituteTotals.totalFat) / (originalTotals.totalFat || 1);
+
+    // Helper to safely calculate percentage difference (avoids division by zero)
+    const safePercentageDifference = (original: number, substitute: number): number => {
+        if (original === 0 && substitute === 0) return 0; // No difference if both are zero
+        if (original === 0) return Infinity; // Infinite difference if original is zero but substitute isn't
+        return Math.abs(original - substitute) / original;
+    };
+
+    // Calculate the absolute percentage difference for each nutrient
+    const energyDifference = safePercentageDifference(originalTotals.totalEnergy, substituteTotals.totalEnergy);
+    const proteinDifference = safePercentageDifference(originalTotals.totalProtein, substituteTotals.totalProtein);
+    const carbsDifference = safePercentageDifference(originalTotals.totalCarbs, substituteTotals.totalCarbs);
+    const fatDifference = safePercentageDifference(originalTotals.totalFat, substituteTotals.totalFat);
+
+    // Calculate the weighted score
     const score =
         (energyDifference * WEIGHTS.energy) +
         (proteinDifference * WEIGHTS.protein) +
         (carbsDifference * WEIGHTS.carbs) +
         (fatDifference * WEIGHTS.fat);
-    return score;
+
+    // Return Infinity if any calculation resulted in NaN or Infinity, otherwise return the score
+    return !isNaN(score) && isFinite(score) ? score : Infinity;
 }
 
-// =========================================================================
-// ✅ NOVA FUNÇÃO AUXILIAR PARA CENTRALIZAR A LÓGICA DE PONTUAÇÃO E VALIDAÇÃO
-// =========================================================================
+/**
+ * Calculates the quantity of a substitute food needed to approximately match
+ * the total energy (calories) of the original food item, or returns the fixed
+ * quantity if the substitute has a fixed weight.
+ * @param originalTotalEnergy The total energy (kcal) of the original food item quantity.
+ * @param substituteFood The Food object representing the potential substitute.
+ * @returns An object containing the calculated quantity and a flag indicating if the quantity is fixed.
+ */
+function calculateEquivalentQuantity(
+    originalTotalEnergy: number,
+    substituteFood: Food
+): { equivalentQuantity: number; isFixed: boolean } {
+    // Check if the substitute food has a fixed weight (e.g., a package)
+    if (substituteFood.variableWeight === false) {
+        // For fixed weight items, the "equivalent quantity" is simply the package quantity.
+        // Ensure quantity exists and is a number, default to 0 if not.
+        const fixedQuantity = typeof substituteFood.quantity === 'number' ? substituteFood.quantity : 0;
+        return { equivalentQuantity: fixedQuantity, isFixed: true };
+    } else {
+        // For variable weight items, calculate quantity based on caloric equivalence.
+        // Safely access nutritional info and energy value.
+        const energyPer100g = substituteFood.nutritional_info_per_100g?.energy;
+
+        // Validate that energyPer100g is a positive number.
+        if (typeof energyPer100g !== 'number' || energyPer100g <= 0) {
+            // Log a warning if energy data is missing or invalid for a variable weight item.
+            logger.warn(`Alimento ${substituteFood.standard_name} (ID: ${substituteFood.id}) tem peso variável mas sem energia válida por 100g. Usando 100kcal/100g como fallback para cálculo de quantidade.`);
+            // Use a fallback energy density (e.g., 1 kcal/g or 100 kcal/100g)
+            const fallbackEnergyPerGram = 1; // 100 kcal / 100g
+            // Calculate quantity based on fallback density. Ensure it's non-negative.
+            const quantity = Math.max(0, Math.round(originalTotalEnergy / fallbackEnergyPerGram));
+            return { equivalentQuantity: quantity, isFixed: false };
+        }
+
+        // Calculate energy per gram from energy per 100g.
+        const substituteEnergyPerGram = energyPer100g / 100;
+        // Calculate the quantity needed to match the original total energy. Ensure it's non-negative.
+        const quantity = Math.max(0, Math.round(originalTotalEnergy / substituteEnergyPerGram));
+        return { equivalentQuantity: quantity, isFixed: false };
+    }
+}
+
 
 /**
- * Calcula a pontuação de um candidato, validando e ajustando sua quantidade
- * de acordo com o limite semanal e a quantidade mínima prática.
- * @returns Um objeto com o candidato, sua pontuação e quantidade efetiva.
- * Retorna score: Infinity se o candidato for inválido.
+ * Calcula a pontuação de um candidato, validando e ajustando sua quantidade.
+ * Trata peso fixo e variável com critérios diferentes de desvio calórico.
  */
 function scoreCandidate(
     candidate: Food,
     originalTotals: TotalNutrientsProfile,
+    originalFoodIsFixed: boolean,
     currentQuantitiesMap: Map<string, number>,
-    config: { minPracticalQuantity: number; scoreMethod: 'similarity' | 'caloric' }
+    config: { scoreMethod: 'similarity' | 'caloric' }
 ): { food: Food; score: number; effectiveQuantity: number; } {
 
-    // 1. Calcula o espaço real disponível para o candidato na dieta
     const alreadyInDietAmount = currentQuantitiesMap.get(candidate.id) || 0;
     const remainingAllowed = candidate.max_weekly_g_per_person
         ? candidate.max_weekly_g_per_person - alreadyInDietAmount
-        : Infinity; // Se não houver limite, o espaço é "infinito"
+        : Infinity;
 
-    // 2. Invalida o candidato se não houver espaço para a quantidade mínima
-    if (remainingAllowed < config.minPracticalQuantity) {
+    if (remainingAllowed < ABSOLUTE_MINIMUM_QUANTITY) {
         return { food: candidate, score: Infinity, effectiveQuantity: 0 };
     }
 
-    // 3. Calcula a quantidade ideal baseada nas calorias do item original
-    const { equivalentQuantity: calorieEquivalentQuantity } = calculateEquivalentQuantity(originalTotals.totalEnergy, candidate);
+    const { equivalentQuantity, isFixed: candidateIsFixed } = calculateEquivalentQuantity(originalTotals.totalEnergy, candidate);
+    let finalQuantity: number;
+    let deviationThreshold: number;
 
-    // 4. APLICA A CORREÇÃO: A quantidade final é o MENOR valor entre a ideal e a permitida
-    const finalQuantity = Math.min(calorieEquivalentQuantity, remainingAllowed);
-
-    // 5. Invalida se a quantidade final, após o ajuste, se tornou impraticável
-    if (finalQuantity < config.minPracticalQuantity) {
-        return { food: candidate, score: Infinity, effectiveQuantity: 0 };
+    if (candidateIsFixed) {
+        finalQuantity = equivalentQuantity;
+        deviationThreshold = MAX_CALORIC_DEVIATION_PERCENT_FIXED;
+        if (finalQuantity > remainingAllowed || finalQuantity < ABSOLUTE_MINIMUM_QUANTITY) {
+            return { food: candidate, score: Infinity, effectiveQuantity: 0 };
+        }
+    } else {
+        deviationThreshold = MAX_CALORIC_DEVIATION_PERCENT;
+        const unroundedQuantity = Math.max(ABSOLUTE_MINIMUM_QUANTITY, Math.min(equivalentQuantity, remainingAllowed));
+        finalQuantity = Math.max(ABSOLUTE_MINIMUM_QUANTITY, Math.round(unroundedQuantity / ROUNDING_STEP) * ROUNDING_STEP);
+        if (finalQuantity > remainingAllowed || finalQuantity < ABSOLUTE_MINIMUM_QUANTITY) {
+            return { food: candidate, score: Infinity, effectiveQuantity: 0 };
+        }
     }
 
-    // 6. Calcula a pontuação com base na quantidade final e correta
     const substituteTotals = calculateTotalNutrients(candidate, finalQuantity);
-    let score: number;
+    const caloricDifference = Math.abs(originalTotals.totalEnergy - substituteTotals.totalEnergy);
+    const caloricDeviationPercent = originalTotals.totalEnergy > 0 ? (caloricDifference / originalTotals.totalEnergy) : (substituteTotals.totalEnergy > 0 ? Infinity : 0);
 
+    if (caloricDeviationPercent > deviationThreshold) {
+        return { food: candidate, score: Infinity, effectiveQuantity: 0 };
+    }
+
+    let score: number;
     if (config.scoreMethod === 'similarity') {
         score = calculateSimilarityScore(originalTotals, substituteTotals);
-    } else { // 'caloric'
-        score = Math.abs(originalTotals.totalEnergy - substituteTotals.totalEnergy);
+    } else {
+        score = caloricDifference;
+    }
+
+    if (originalFoodIsFixed !== candidateIsFixed) {
+        score *= 1.5;
     }
 
     return { food: candidate, score, effectiveQuantity: finalQuantity };
 }
 
 
-// ========================================================================================
-// ✅ FUNÇÃO findAndReplaceSubstitute REFATORADA COM INTELIGÊNCIA ARTIFICIAL
-// ========================================================================================
-
-export const findAndReplaceSubstitute = onCall({ region: "southamerica-east1", memory: "1GiB", timeoutSeconds: 120 }, async (request) => {
-    // 1. Validação e Segurança (sem alterações)
+export const findAndReplaceSubstitute = onCall({ region: "southamerica-east1", memory: "2GiB", timeoutSeconds: 120 }, async (request) => {
+    // 1. Validação e Segurança
     if (!request.auth) throw new HttpsError("unauthenticated", "Usuário não autenticado.");
-    const { dietId, originalFood, originalFoodQuantity, triedSubstituteIds, orderItemId } = request.data as SubstituteRequestData;
-    if (!dietId || !originalFood || !orderItemId || !originalFoodQuantity) throw new HttpsError("invalid-argument", "Dados insuficientes.");
+    const { dietId, originalFood, triedSubstituteIds, orderItemId } = request.data as SubstituteRequestData;
+    if (!dietId || !originalFood || !originalFood.quantity || !orderItemId) throw new HttpsError("invalid-argument", "Dados insuficientes (dietId, originalFood com quantity, orderItemId).");
+    const originalFoodQuantity = originalFood.quantity;
+    const originalFoodIsFixed = originalFood.variableWeight === false;
+
     const dietDocRef = db.collection("diets").doc(dietId);
     const dietDoc = await dietDocRef.get();
     if (!dietDoc.exists) throw new HttpsError("not-found", "Dieta não encontrada.");
     const dietData = dietDoc.data() as Diet;
     if (dietData.picker?.id !== request.auth.uid) throw new HttpsError("permission-denied", "Acesso negado.");
 
-    // 2. Preparação e Constantes (sem alterações)
+    // 2. Preparação e Constantes
     const healthProfile = dietData.healthProfile;
     const allFoods = await fetchAllFoodsCached();
-    const allowedFoodNames = await filterFoodListWithAICached(allFoods, healthProfile, 'GEMINI');
+    const allowedFoodNames = await filterFoodListWithAICached(allFoods, healthProfile);
     const originalItemTotalNutrients = calculateTotalNutrients(originalFood, originalFoodQuantity);
-
-    const MINIMUM_PRACTICAL_QUANTITY = 30;
-    const TOP_N_FOR_AI = 4; // Número de candidatos a enviar para a IA
 
     const currentQuantitiesMap = new Map<string, number>();
     (dietData.selectedFoods || []).forEach(item => {
@@ -1306,29 +1374,43 @@ export const findAndReplaceSubstitute = onCall({ region: "southamerica-east1", m
         currentQuantitiesMap.set(item.food.id, currentAmount + item.quantity);
     });
 
-    // 3. Filtragem de Candidatos Base (sem alterações)
+    // 3. Filtragem de Candidatos Base
     const baseCandidates = allFoods.filter(candidate => {
         return allowedFoodNames.includes(candidate.standard_name) &&
             candidate.id !== originalFood.id &&
             !triedSubstituteIds.includes(candidate.id);
     });
-    if (baseCandidates.length === 0) throw new HttpsError("not-found", "Nenhum substituto foi encontrado após a filtragem inicial.");
 
-    // 4. LÓGICA DE BUSCA: Coleta e pontuação de todos os candidatos viáveis
-    const foodIdsInDiet = (dietData.selectedFoods || []).map(item => item.food.id);
+    // 4. LÓGICA DE BUSCA ALGORÍTMICA
+    const foodIdsInDiet = new Set((dietData.selectedFoods || []).map(item => item.food.id));
     const allScoredCandidates: { food: Food; score: number; effectiveQuantity: number; }[] = [];
     const originalMacro = getMainMacronutrient(originalFood);
+    const originalCategory = originalFood.category;
 
-    const candidatesLvl1And2 = baseCandidates.filter(c => c.category === originalFood.category && !foodIdsInDiet.includes(c.id));
-    const candidatesLvl3 = baseCandidates.filter(c => c.variableWeight === true && !foodIdsInDiet.includes(c.id) && getMainMacronutrient(c) === originalMacro);
-    const candidatesLvl4 = baseCandidates.filter(c => c.variableWeight === true && getMainMacronutrient(c) === originalMacro);
+    // Nível 1 & 2: Mesma categoria, não presente (Similaridade)
+    const candidatesLvl1And2 = baseCandidates.filter(c => c.category === originalCategory && !foodIdsInDiet.has(c.id));
+    allScoredCandidates.push(...candidatesLvl1And2.map(c => scoreCandidate(c, originalItemTotalNutrients, originalFoodIsFixed, currentQuantitiesMap, { scoreMethod: 'similarity' })));
 
-    // Pontua e adiciona todos os candidatos de todos os níveis a uma única lista
-    allScoredCandidates.push(...candidatesLvl1And2.map(c => scoreCandidate(c, originalItemTotalNutrients, currentQuantitiesMap, { minPracticalQuantity: MINIMUM_PRACTICAL_QUANTITY, scoreMethod: 'similarity' })));
-    allScoredCandidates.push(...candidatesLvl3.map(c => scoreCandidate(c, originalItemTotalNutrients, currentQuantitiesMap, { minPracticalQuantity: MINIMUM_PRACTICAL_QUANTITY, scoreMethod: 'caloric' })));
-    allScoredCandidates.push(...candidatesLvl4.map(c => scoreCandidate(c, originalItemTotalNutrients, currentQuantitiesMap, { minPracticalQuantity: MINIMUM_PRACTICAL_QUANTITY, scoreMethod: 'caloric' })));
+    // Nível 3: Var, não presente, mesmo macro (Calórico)
+    const candidatesLvl3 = baseCandidates.filter(c => c.variableWeight === true && !foodIdsInDiet.has(c.id) && getMainMacronutrient(c) === originalMacro);
+    allScoredCandidates.push(...candidatesLvl3.map(c => scoreCandidate(c, originalItemTotalNutrients, originalFoodIsFixed, currentQuantitiesMap, { scoreMethod: 'caloric' })));
 
-    // Deduplicar a lista, mantendo apenas a melhor pontuação para cada alimento
+    // Nível 4: Var, PODE estar presente, mesmo macro (Calórico)
+    const candidatesLvl4 = baseCandidates.filter(c => c.variableWeight === true && foodIdsInDiet.has(c.id) && getMainMacronutrient(c) === originalMacro);
+    allScoredCandidates.push(...candidatesLvl4.map(c => scoreCandidate(c, originalItemTotalNutrients, originalFoodIsFixed, currentQuantitiesMap, { scoreMethod: 'caloric' })));
+
+    // Nível 5: Var, não presente, macro DIFERENTE (Calórico - Fallback)
+    const candidatesLvl5 = baseCandidates.filter(c => c.variableWeight === true && !foodIdsInDiet.has(c.id) && getMainMacronutrient(c) !== originalMacro);
+    allScoredCandidates.push(...candidatesLvl5.map(c => scoreCandidate(c, originalItemTotalNutrients, originalFoodIsFixed, currentQuantitiesMap, { scoreMethod: 'caloric' })));
+
+    // Nível 6: Itens de peso FIXO (Score Calórico - Baixa Prioridade)
+    const candidatesLvl6 = baseCandidates.filter(c =>
+        c.variableWeight === false &&
+        (originalFoodIsFixed ? c.category !== originalCategory : true)
+    );
+    allScoredCandidates.push(...candidatesLvl6.map(c => scoreCandidate(c, originalItemTotalNutrients, originalFoodIsFixed, currentQuantitiesMap, { scoreMethod: 'caloric' })));
+
+    // Deduplicar e Ordenar
     const candidatesMap = new Map<string, { food: Food; score: number; effectiveQuantity: number; }>();
     for (const candidate of allScoredCandidates) {
         if (candidate.score === Infinity) continue;
@@ -1337,62 +1419,116 @@ export const findAndReplaceSubstitute = onCall({ region: "southamerica-east1", m
             candidatesMap.set(candidate.food.id, candidate);
         }
     }
-
     const uniqueBestCandidates = Array.from(candidatesMap.values()).sort((a, b) => a.score - b.score);
 
-    if (uniqueBestCandidates.length === 0) {
-        throw new HttpsError("not-found", "Nenhum substituto compatível foi encontrado que respeite todos os limites.");
-    }
+    let bestCandidate: { food: Food; score: number; effectiveQuantity: number; } | null = null;
 
-    // 5. REFINAMENTO COM IA: Seleciona o melhor candidato da lista
-    let bestCandidate = uniqueBestCandidates[0]; // Define o melhor candidato do algoritmo como fallback
-    const topCandidatesForAI = uniqueBestCandidates.slice(0, TOP_N_FOR_AI);
+    if (uniqueBestCandidates.length > 0) {
+        // 5. REFINAMENTO COM IA (se o algoritmo achou candidatos)
+        bestCandidate = uniqueBestCandidates[0];
+        const topCandidatesForAI = uniqueBestCandidates.slice(0, TOP_N_FOR_AI_REFINEMENT);
 
-    // Otimização: se só houver 1 candidato, não gasta uma chamada de IA
-    if (topCandidatesForAI.length > 1) {
-        const originalFoodDescription = `${originalFood.standard_name} (categoria: ${originalFood.category}, principal macronutriente: ${getMainMacronutrient(originalFood)})`;
-        const candidatesJSON = topCandidatesForAI.map(c => ({
-            id: c.food.id,
-            nome: c.food.standard_name,
-            quantidade: `${c.effectiveQuantity}g`,
-            descricao: `categoria: ${c.food.category}, principal macronutriente: ${getMainMacronutrient(c.food)}`
-        }));
+        if (topCandidatesForAI.length > 1) {
+            const originalFoodDescription = `${originalFood.standard_name} (categoria: ${originalFood.category}, macro: ${getMainMacronutrient(originalFood)})`;
+            const candidatesJSON = topCandidatesForAI.map(c => ({
+                id: c.food.id,
+                nome: c.food.standard_name,
+                quantidade: `${c.effectiveQuantity}g`,
+                descricao: `categoria: ${c.food.category}, macro: ${getMainMacronutrient(c.food)}, score alg: ${c.score.toFixed(2)}`
+            }));
+            const prompt = `
+                Você é um assistente de nutrição e culinária. Escolha o substituto MAIS COERENTE E CULINARIAMENTE SIMILAR.
+                Original: "${originalFoodDescription}", ${originalFoodQuantity}g.
+                Candidatos (pré-filtrados por nutrição/limites, ordenados pelo algoritmo):
+                ${JSON.stringify(candidatesJSON, null, 2)}
+                Priorize categoria/uso similar. Evite trocas estranhas (grão por fruta se houver outro grão).
+                Retorne APENAS JSON: {"best_candidate_id": "id_escolhido"}`;
+            try {
+                logger.info(`Chamando IA para refinar a escolha entre ${topCandidatesForAI.length} candidatos.`);
+                const aiResponseString = await callAI(prompt, 'GEMINI', true);
+                const aiResponse = JSON.parse(aiResponseString);
+                const chosenId = aiResponse.best_candidate_id;
+                const aiChoice = topCandidatesForAI.find(c => c.food.id === chosenId);
+                if (aiChoice) {
+                    bestCandidate = aiChoice;
+                    logger.info(`IA refinou para: ${aiChoice.food.standard_name}. (Algoritmo: ${uniqueBestCandidates[0].food.standard_name})`);
+                } else {
+                    logger.warn(`IA (refino) retornou ID inválido ('${chosenId}'). Usando fallback do algoritmo.`);
+                }
+            } catch (error) {
+                logger.error("Erro na IA de refino. Usando fallback do algoritmo.", error);
+            }
+        } else {
+            logger.info(`Apenas 1 candidato válido encontrado (${bestCandidate.food.standard_name}), pulando refinamento com IA.`);
+        }
 
-        const prompt = `
-            Você é um assistente de nutrição e culinária. Sua tarefa é escolher o substituto mais coerente para um alimento indisponível.
-            O alimento original é: "${originalFoodDescription}", na quantidade de ${originalFoodQuantity}g.
-            Abaixo estão ${candidatesJSON.length} candidatos pré-selecionados. A quantidade deles já foi ajustada para equivalência nutricional.
-            Escolha o melhor substituto com base na coerência culinária, tipo de uso, textura e sabor, para além dos nutrientes. Por exemplo, um grão deve ser substituído por outro grão ou leguminosa, não por um vegetal.
+    } else {
+        // 5.b FALLBACK PARA IA (se o algoritmo NÃO achou NADA)
+        logger.warn(`Algoritmo não encontrou substitutos válidos para ${originalFood.standard_name}. Tentando fallback com IA...`);
 
-            Candidatos:
-            ${JSON.stringify(candidatesJSON, null, 2)}
+        const restrictions = healthProfile.dietaryRestrictions?.join(', ') || 'Nenhuma';
+        const allergies = healthProfile.allergies?.join(', ') || 'Nenhuma';
 
-            Analise as opções e retorne APENAS um objeto JSON com o ID do candidato escolhido. Não inclua nenhuma outra palavra, explicação ou markdown.
-            O formato da resposta deve ser exatamente: {"best_candidate_id": "id_do_alimento_escolhido"}
-        `;
+        const fallbackPrompt = `
+            Você é um assistente de nutrição. Um item está indisponível na compra: "${originalFood.standard_name}" (${originalFoodQuantity}g).
+            Sugira UM ÚNICO substituto comum, de peso variável (vendido por kg, como vegetais, frutas, grãos) que seja nutricionalmente próximo e CULINARIAMENTE COERENTE (ex: não troque couve por banana).
+            Restrições do usuário: ${restrictions}. Alergias: ${allergies}. NÃO SUGIRA NADA QUE VIOLE ISSO.
+            Retorne APENAS o nome do alimento substituto em um objeto JSON. Não inclua quantidade, explicação ou markdown.
+            Formato: {"substitute_name": "Nome do Alimento Sugerido"}`;
 
         try {
-            logger.info(`Chamando IA para refinar a escolha entre ${topCandidatesForAI.length} candidatos.`);
-            const aiResponseString = await callAI(prompt, 'GEMINI', true);
+            const aiResponseString = await callAI(fallbackPrompt, 'GEMINI', true);
             const aiResponse = JSON.parse(aiResponseString);
-            const chosenId = aiResponse.best_candidate_id;
+            const suggestedName = aiResponse.substitute_name?.trim();
 
-            const aiChoice = topCandidatesForAI.find(c => c.food.id === chosenId);
+            if (suggestedName) {
+                logger.info(`IA (fallback) sugeriu: "${suggestedName}". Validando...`);
+                const suggestedFood = allFoods.find(f => f.standard_name.toLowerCase() === suggestedName.toLowerCase());
 
-            if (aiChoice) {
-                bestCandidate = aiChoice;
-                logger.info(`IA escolheu: ${aiChoice.food.standard_name}. (Escolha do algoritmo era: ${uniqueBestCandidates[0].food.standard_name})`);
+                if (suggestedFood &&
+                    allowedFoodNames.includes(suggestedFood.standard_name) &&
+                    !triedSubstituteIds.includes(suggestedFood.id) &&
+                    suggestedFood.id !== originalFood.id &&
+                    suggestedFood.variableWeight === true) {
+
+                    const { equivalentQuantity } = calculateEquivalentQuantity(originalItemTotalNutrients.totalEnergy, suggestedFood);
+                    const finalQuantity = Math.max(ABSOLUTE_MINIMUM_QUANTITY, Math.round(equivalentQuantity / ROUNDING_STEP) * ROUNDING_STEP);
+
+                    const alreadyInDietAmount = currentQuantitiesMap.get(suggestedFood.id) || 0;
+                    const remainingAllowed = suggestedFood.max_weekly_g_per_person
+                        ? suggestedFood.max_weekly_g_per_person - alreadyInDietAmount
+                        : Infinity;
+
+                    if (finalQuantity >= ABSOLUTE_MINIMUM_QUANTITY && finalQuantity <= remainingAllowed) {
+                        logger.info(`Sugestão da IA (${suggestedFood.standard_name}) validada com quantidade ${finalQuantity}g.`);
+                        bestCandidate = {
+                            food: suggestedFood,
+                            score: 999, // Score alto indica AI fallback
+                            effectiveQuantity: finalQuantity
+                        };
+                    } else {
+                        logger.warn(`Sugestão da IA (${suggestedFood.standard_name}) invalidada por quantidade (${finalQuantity}g) ou limite semanal (${remainingAllowed}g).`);
+                    }
+                } else {
+                    logger.warn(`Sugestão da IA ("${suggestedName}") não encontrada no DB, não permitida, já tentada, é o original, ou não tem peso variável.`);
+                }
             } else {
-                logger.warn(`IA retornou um ID inválido ('${chosenId}'). Usando o melhor candidato do algoritmo como fallback.`);
+                logger.warn("IA (fallback) não retornou um nome de substituto.");
             }
         } catch (error) {
-            logger.error("Erro ao chamar a IA para refinar a substituição. Usando o melhor candidato do algoritmo como fallback.", error);
+            logger.error("Erro ao chamar a IA para fallback de substituição.", error);
         }
     }
 
-    // 6. Finalização (usa o 'bestCandidate' escolhido pela IA ou pelo fallback)
+    // --- VERIFICAÇÃO FINAL ---
+    if (!bestCandidate) {
+        logger.error(`Falha final: Nenhum substituto encontrado para ${originalFood.standard_name} (${originalFoodQuantity}g) após algoritmo e fallback da IA.`);
+        throw new HttpsError("not-found", "Não foi possível encontrar um substituto adequado para este item, nem com a ajuda da IA.");
+    }
+
+    // 6. Finalização
     const { food: substituteFood, effectiveQuantity } = bestCandidate;
-    logger.info(`Substituto final escolhido: ${substituteFood.standard_name}. Quantidade: ${effectiveQuantity}g`);
+    logger.info(`Substituto final escolhido: ${substituteFood.standard_name}. Quantidade: ${effectiveQuantity}g ${bestCandidate.score === 999 ? '(via AI fallback)' : ''}`);
 
     let newExplanation = '';
     try {
@@ -1403,7 +1539,7 @@ export const findAndReplaceSubstitute = onCall({ region: "southamerica-east1", m
 
     const currentFoods = dietData.selectedFoods || [];
     const itemIndex = currentFoods.findIndex(item => item.orderItemId === orderItemId);
-    if (itemIndex === -1) throw new HttpsError("not-found", "Item a ser substituído não encontrado.");
+    if (itemIndex === -1) throw new HttpsError("not-found", "Item a ser substituído não encontrado na lista atual.");
 
     const itemToSubstitute = currentFoods[itemIndex];
     const updatedItem: FoodItem = {
@@ -1413,7 +1549,7 @@ export const findAndReplaceSubstitute = onCall({ region: "southamerica-east1", m
         isSubstituted: true,
         originalFood: itemToSubstitute.originalFood || itemToSubstitute.food,
         originalQuantity: itemToSubstitute.originalQuantity || itemToSubstitute.quantity,
-        explanationInDiet: newExplanation || itemToSubstitute.explanationInDiet,
+        explanationInDiet: newExplanation || `Substituímos ${itemToSubstitute.food.standard_name} por ${substituteFood.standard_name} por indisponibilidade.`,
     };
     currentFoods[itemIndex] = updatedItem;
 
@@ -1422,6 +1558,9 @@ export const findAndReplaceSubstitute = onCall({ region: "southamerica-east1", m
     logger.info(`Substituição realizada com sucesso para o item ${orderItemId} na dieta ${dietId}.`);
     return { success: true, message: "Substituição realizada com sucesso.", substitute: updatedItem };
 });
+
+
+
 
 
 // A função de reverter permanece a mesma
