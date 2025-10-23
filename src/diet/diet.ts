@@ -433,8 +433,8 @@ export const processDietJobStep = onDocumentWritten({
                 const finalTotalPrice = (totalEstimatedPrice * 1.4) + rideEstimate.highEstimate;
 
                 const newDietId = await generateSequentialDietId(db, uid);
-                // const paymentDetails = await _generatePixChargeLogic(finalTotalPrice.toFixed(2), newDietId);
-                const paymentDetails = await _generatePixChargeLogic('0.10', newDietId);
+                const paymentDetails = await _generatePixChargeLogic(finalTotalPrice.toFixed(2), newDietId);
+                // const paymentDetails = await _generatePixChargeLogic('0.10', newDietId);
 
                 const userDocFinal = await db.collection('users').doc(uid).get();
                 const userDataFinal = userDocFinal.data() as UserProfile;
@@ -451,6 +451,7 @@ export const processDietJobStep = onDocumentWritten({
                     totalEstimatedFoodsPrice: parseFloat(totalEstimatedPrice.toFixed(2)),
                     totalEstimatedDeliveryPrice: parseFloat(rideEstimate.highEstimate.toFixed(2)),
                     totalPrice: parseFloat(finalTotalPrice.toFixed(2)),
+                    // totalPrice: 0.10,
                     currentStatus: { status: "pending", timestamp: new Date() },
                     statusHistory: [{ status: "pending", timestamp: new Date() }],
                     timestamp: new Date(),

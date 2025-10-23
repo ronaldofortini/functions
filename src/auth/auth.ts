@@ -657,7 +657,7 @@ export const finalizeRegistration = onCall({ cpu: 0.5 }, async (request) => {
 
     logger.log(`Dados recebidos: MODO='${mode}', AUTENTICADO=${isAuthed}`);
 
-    // 1. A verificação do 'review'
+    // 1. A verificação do 'review' (Sem alterações)
     if (mode === 'review') {
       logger.log(">>> Entrando no bloco 'review'.");
       if (!rawProfile) {
@@ -706,26 +706,20 @@ Medicamentos: ${hp.currentMedications.length > 0 ? hp.currentMedications.join(',
       };
     }
 
-    // 2. O bloco para salvar o usuário do Google
+    // 2. O bloco para salvar o usuário do Google (COM ALTERAÇÃO)
     else if (mode === 'save_google_user' && request.auth && request.auth.uid) {
       logger.log(">>> Entrando no bloco 'save_google_user'.");
       if (!rawProfile) {
         throw new HttpsError("invalid-argument", "O perfil do usuário é necessário para salvar.");
       }
-      // ✅ NOVA LÓGICA IMPLEMENTADA AQUI
-      // Garante que a foto do Google seja usada se o usuário não enviou uma nova.
-      // Verificamos se a URL no perfil vindo do cliente é uma URL de upload temporária.
+      
       const hasUploadedNewPhoto = rawProfile.photoURL && rawProfile.photoURL.includes('/avatars/temp/');
 
       if (!hasUploadedNewPhoto) {
-        // Se não enviou foto nova, usamos a foto do token de autenticação do Google como a fonte da verdade.
-        // Se o usuário do Google não tiver foto, 'request.auth.token.picture' será nulo,
-        // e a função _processProfileForFirestore usará a foto placeholder.
         rawProfile.photoURL = request.auth.token.picture || null;
       }
 
       const uid = request.auth.uid;
-      // Agora, o `rawProfile` é enviado para processamento com a URL da foto correta.
       const profileToSave = await _processProfileForFirestore(rawProfile, uid, false);
 
       await admin.auth().updateUser(uid, { displayName: profileToSave.fullName, photoURL: profileToSave.photoURL });
@@ -734,19 +728,34 @@ Medicamentos: ${hp.currentMedications.length > 0 ? hp.currentMedications.join(',
       if (profileToSave.email) {
         await admin.firestore().collection('incompleteRegistrations').doc(profileToSave.email).delete();
       }
-      await _sendWelcomeEmails(profileToSave);
+
+      // --- INÍCIO DA MODIFICAÇÃO (Google User) ---
+      // Envolve a chamada de e-mail em um try...catch para que não quebre o registro
+      try {
+        logger.log(`Tentando enviar e-mails de boas-vindas para ${profileToSave.email}...`);
+        await _sendWelcomeEmails(profileToSave);
+        logger.log(`E-mails para ${profileToSave.email} enviados com sucesso (ou fila).`);
+      } catch (emailError: any) {
+        // Se o envio de email falhar (ex: SendGrid expirado), apenas registre o erro e continue.
+        // NÃO jogue o erro para cima, para não falhar o cadastro inteiro.
+        logger.warn(`AVISO: Falha ao enviar e-mail de boas-vindas (Google User) para ${profileToSave.email}. O cadastro continuará.`, {
+          uid: uid,
+          error: emailError.message,
+        });
+      }
+      // --- FIM DA MODIFICAÇÃO ---
+
       logger.log("<<< Retornando do bloco 'save_google_user' com sucesso.");
       return { success: true, uid: uid };
     }
 
-    // 3. ✅ BLOCO CORRIGIDO E IMPLEMENTADO
+    // 3. Bloco de confirmação (COM ALTERAÇÃO)
     else if (mode === 'confirm') {
       logger.log(">>> Entrando no bloco 'confirm'.");
       if (!email) {
         throw new HttpsError("invalid-argument", "O e-mail é necessário para confirmar o cadastro.");
       }
 
-      // 1. Busca os dados da sessão de registro
       const sessionRef = admin.firestore().collection('registrationSessions').doc(email);
       const sessionDoc = await sessionRef.get();
       if (!sessionDoc.exists) {
@@ -754,7 +763,6 @@ Medicamentos: ${hp.currentMedications.length > 0 ? hp.currentMedications.join(',
       }
       const { profileToSave: finalRawProfile, password } = sessionDoc.data() as any;
 
-      // 2. Cria o usuário no Firebase Auth
       const userRecord = await admin.auth().createUser({
         email: finalRawProfile.email,
         password: password,
@@ -762,16 +770,24 @@ Medicamentos: ${hp.currentMedications.length > 0 ? hp.currentMedications.join(',
         photoURL: finalRawProfile.photoURL,
       });
 
-      // 3. Processa o perfil para salvar no Firestore
       const profileToSaveInDb = await _processProfileForFirestore(finalRawProfile, userRecord.uid, true);
 
-      // 4. Salva o perfil no Firestore
       await admin.firestore().collection("users").doc(userRecord.uid).set(profileToSaveInDb);
 
-      // 5. Envia e-mails
-      await _sendWelcomeEmails(profileToSaveInDb);
+      // --- INÍCIO DA MODIFICAÇÃO (Email User) ---
+      // Envolve a chamada de e-mail em um try...catch
+      try {
+        logger.log(`Tentando enviar e-mails de boas-vindas para ${profileToSaveInDb.email}...`);
+        await _sendWelcomeEmails(profileToSaveInDb);
+        logger.log(`E-mails para ${profileToSaveInDb.email} enviados com sucesso (ou fila).`);
+      } catch (emailError: any) {
+        logger.warn(`AVISO: Falha ao enviar e-mail de boas-vindas (Email User) para ${profileToSaveInDb.email}. O cadastro continuará.`, {
+          uid: userRecord.uid,
+          error: emailError.message,
+        });
+      }
+      // --- FIM DA MODIFICAÇÃO ---
 
-      // 6. Limpa as sessões temporárias
       await sessionRef.delete();
       await admin.firestore().collection('incompleteRegistrations').doc(email).delete();
       await admin.firestore().collection('authSessions').doc(email).delete();
@@ -780,7 +796,7 @@ Medicamentos: ${hp.currentMedications.length > 0 ? hp.currentMedications.join(',
       return { success: true, uid: userRecord.uid };
     }
 
-    // --- ERRO FINAL ---
+    // --- ERRO FINAL --- (Sem alterações)
     else {
       logger.error("!!! NENHUM BLOCO VÁLIDO FOI EXECUTADO. Retornando erro.", { mode, isAuthed });
       throw new HttpsError("unauthenticated", "Operação não permitida ou modo inválido.");
