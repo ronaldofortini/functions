@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# npm run deploy:functions -- "Sua Mensagem de Commit" "funcao1,funcao2"
+
 set -e
 
 # 1. Pega a mensagem de commit do primeiro argumento.

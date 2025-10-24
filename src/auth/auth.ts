@@ -266,7 +266,9 @@ export const handleAuthStep = onCall({ cors: allowedOrigins }, async (request) =
       case "avatar":
         response.isValid = true;
         response.nextStep = "finished";
-        response.nextQuestion = "Perfeito!||Vamos revisar seus dados...";
+        // response.nextQuestion = "Perfeito!||Vamos revisar seus dados...";
+        response.nextQuestion = "Perfeito!";
+
         response.isLoading = true;
         break;
       default:
